@@ -499,7 +499,8 @@ function buildRationale(input: {
   allowedWidth: number;
   sourceChars: number;
 }): string {
-  const { spec, profile, maxRatio, chars, sourceWidth, allowedWidth } = input;
+  const { spec, profile, maxRatio, chars, sourceWidth, allowedWidth, sourceChars } =
+    input;
   const ratioDrivenWidth = maxRatio * sourceWidth;
   // Report which of the two terms actually decided the allowance, so the UI
   // explains a 2.6x-looking button budget instead of appearing inconsistent.
@@ -509,7 +510,10 @@ function buildRationale(input: {
 
   if (!headroomWon) return base;
 
-  return `${base} The source is very short, so a fixed minimum allowance of ${round3(allowedWidth - sourceWidth).toFixed(2)}em applies instead — "OK" cannot be translated into 2.4 characters.`;
+  // This sentence is per-string UI copy, so every number in it must come from
+  // THIS string. An illustrative example hardcoded here reads as a factual
+  // claim about whatever row the developer happens to be looking at.
+  return `${base} The source is only ${sourceChars} character${sourceChars === 1 ? "" : "s"}, and scaling that by ${maxRatio.toFixed(2)}x leaves too little room for any translation, so a fixed minimum allowance of ${round3(allowedWidth - sourceWidth).toFixed(2)}em applies instead.`;
 }
 
 /**

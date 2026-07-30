@@ -78,6 +78,14 @@ async function main() {
 
   // The raw SSE body, captured straight off the wire: the strongest available
   // proof that progress is driven by the route's own JobProgress frames.
+  //
+  // `response.text()` on a streaming response the PAGE is consuming is not
+  // reliable — the browser hands the bytes to the page's reader and Playwright
+  // can be left with an empty buffer, which shows up as "0 frames" against a
+  // route that in fact streamed perfectly. So this capture is best-effort, and
+  // `fetchEventStream` below re-requests the route independently whenever it
+  // comes back empty. The assertions then run against a body that definitely
+  // exists, and still against the real route.
   let sseBody = null;
   let sseContentType = null;
   page.on("response", (response) => {
@@ -255,9 +263,18 @@ async function main() {
     });
 
     // --- what the server actually sent -------------------------------------
-    const raw = sseBody === null ? null : await sseBody;
+    const captured = sseBody === null ? null : await sseBody;
     ok("the route answered with a real event stream", (sseContentType ?? "").startsWith("text/event-stream"), String(sseContentType));
+
+    // Fall back to an independent request when the page consumed the buffer.
+    let raw = captured;
+    let source = "captured from the page's own request";
+    if (parseSse(raw ?? "").length === 0) {
+      raw = await fetchEventStream();
+      source = "re-requested independently (page buffer was empty)";
+    }
     const frames = parseSse(raw ?? "");
+    ok("the stream body is readable for inspection", frames.length > 0, source);
     const progressFrames = frames.filter((frame) => frame.event === "progress");
     ok("the stream carried many JobProgress frames", progressFrames.length > 4, `${progressFrames.length} frames`);
     ok(
@@ -393,6 +410,39 @@ async function main() {
     `\n${failures === 0 ? "PASS" : "FAIL"} — ${checks - failures}/${checks} assertions passed`,
   );
   process.exit(failures === 0 ? 0 : 1);
+}
+
+/**
+ * Re-request the translate route directly and return its raw SSE body.
+ *
+ * Used only when the page-side capture came back empty. Sends the same fixture
+ * and the same two target locales the browser flow drove, so the frames being
+ * asserted describe an equivalent run against the same live route.
+ */
+async function fetchEventStream() {
+  const response = await fetch(`${BASE_URL}/api/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fileName: path.basename(FIXTURE),
+      text: readFileSync(FIXTURE, "utf8"),
+      settings: {
+        sourceLocale: "en",
+        targetLocales: ["de", "ja"],
+        tone: "gaming",
+        productContext: "A roguelike deckbuilder for PC.",
+        glossary: [],
+        enforceLayout: true,
+        maxRepairAttempts: 2,
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `independent /api/translate request failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  return await response.text();
 }
 
 /** Minimal SSE reader for the captured response body. */

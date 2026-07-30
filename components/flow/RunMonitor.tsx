@@ -162,6 +162,16 @@ export function RunMonitor({ run, onCancel, live = true, className }: RunMonitor
             </li>
           );
         })}
+
+        {/*
+          The 1px gaps here are the list's own background showing through, so an
+          odd track count leaves the trailing grid cell painting that border
+          colour as a solid block — it reads as a half-rendered row. Fill it with
+          an inert cell. Only needed at sm+, where the grid is two columns.
+        */}
+        {tracks.length % 2 === 1 && (
+          <li aria-hidden="true" className="hidden bg-[var(--surface-1)] sm:block" />
+        )}
       </ul>
     </section>
   );

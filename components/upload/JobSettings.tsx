@@ -161,7 +161,16 @@ function ToneSection({
                 </span>
                 {option.label}
               </span>
-              <span className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
+              {/* The selected card sits on an accent-tinted surface, which is
+                  lighter than surface-1; tertiary would land at 4.49:1 there.
+                  Lifting to secondary keeps AA and mirrors the label's own
+                  selected/unselected step. */}
+              <span
+                className={cn(
+                  "text-[12px] leading-relaxed",
+                  active ? "text-[var(--text-secondary)]" : "text-[var(--text-tertiary)]",
+                )}
+              >
                 {option.summary}
               </span>
             </button>

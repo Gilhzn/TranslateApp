@@ -194,9 +194,16 @@ export const LOCALE_PROFILES: Readonly<Record<LocaleCode, LocaleProfile>> =
     ur: profile("ur", "Urdu", "اردو", 1.2, RTL),
 
     // --- South & Southeast Asian -------------------------------------------
-    hi: profile("hi", "Hindi", "हिन्दी", 1.2, { glyphWidth: 1.05 }),
-    bn: profile("bn", "Bengali", "বাংলা", 1.2, { glyphWidth: 1.05 }),
-    ta: profile("ta", "Tamil", "தமிழ்", 1.25, { glyphWidth: 1.05 }),
+    // 1.13 is 0.62/0.55: the advance `metrics.ts` gives an Indic base consonant
+    // over the mean Latin advance. It has to be exactly that quotient, not a
+    // rounder-looking 1.05, because `typicalCharWidth` derives the script's
+    // per-character advance from `glyphWidth` and `budget.ts` divides
+    // `allowedWidth` by it to advertise a character limit. Understating it by
+    // 8% is enough to hand a Tamil badge a `maxChars` that `evaluateFit` then
+    // rejects — the same budget/fit disagreement that made CJK unshippable.
+    hi: profile("hi", "Hindi", "हिन्दी", 1.2, { glyphWidth: 1.13 }),
+    bn: profile("bn", "Bengali", "বাংলা", 1.2, { glyphWidth: 1.13 }),
+    ta: profile("ta", "Tamil", "தமிழ்", 1.25, { glyphWidth: 1.13 }),
     // Thai has no inter-word spaces; the browser needs a line-break dictionary.
     th: profile("th", "Thai", "ไทย", 1.15, CJK(1.0, true)),
     vi: profile("vi", "Vietnamese", "Tiếng Việt", 1.25),
@@ -356,7 +363,7 @@ export function listLocaleProfiles(): LocaleProfile[] {
 
 /** True when the profile's script is full-width (CJK). */
 export function isFullWidthScript(profile_: LocaleProfile): boolean {
-  // 1.5 sits comfortably between the widest non-CJK profile (Devanagari, 1.05)
+  // 1.5 sits comfortably between the widest non-CJK profile (Indic, 1.13)
   // and the narrowest CJK one (Korean, 1.9).
   return profile_.glyphWidth >= 1.5;
 }

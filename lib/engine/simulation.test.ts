@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { extractPlaceholders } from "@/lib/core";
 import {
   describeFitForRepair,
+  estimateLongestLineWidth,
   evaluateFit,
   getLocaleProfile,
 } from "@/lib/layout";
@@ -388,6 +389,163 @@ describe("simulateTranslation", () => {
           );
         }
       }
+    });
+
+    // Regression: the convergence test above only ever feeds multi-word sources
+    // ("Save changes", "Open settings menu"), where dropping a word still leaves
+    // one behind. Real buttons and badges are one short word — they hit the
+    // syllable floor on the FIRST repair, and the previous implementation then
+    // dropped the only word, returned "", and re-inflated to full width on the
+    // next round: a period-2 oscillation that never terminated and handed the
+    // pipeline a blank string. Anything that returns from a repair must be
+    // non-empty and never wider than what it replaced.
+    it("never empties or re-inflates a one-word string across repeated repairs", () => {
+      const sources = ["OK", "Go", "Run", "New", "Free", "min", "Off"];
+      const roles: UiRole[] = ["button", "badge"];
+      const locales: LocaleCode[] = ["de", "ru", "ja", "he"];
+
+      for (const locale of locales) {
+        const profile = getLocaleProfile(locale);
+        const context = contextFor(locale);
+
+        for (const role of roles) {
+          for (const source of sources) {
+            const label = `${locale}/${role} ${JSON.stringify(source)}`;
+            let target = simulateTranslation(
+              makeUnit({ key: "b.k", source, role, locale: profile }),
+              context,
+            ).target;
+            let fit = evaluateFit(source, target, role, profile);
+            const chain = [target];
+
+            expect(target.trim().length, `${label} first pass was empty`).toBeGreaterThan(0);
+
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+              const previous = target;
+              const previousWidth = estimateLongestLineWidth(previous, profile);
+
+              target = simulateTranslation(
+                makeUnit({
+                  key: "b.k",
+                  source,
+                  role,
+                  locale: profile,
+                  previousAttempt: previous,
+                  repairFeedback: describeFitForRepair(fit, profile),
+                }),
+                context,
+              ).target;
+              fit = evaluateFit(source, target, role, profile);
+              chain.push(target);
+
+              const trace = `${label} chain=${chain.map((s) => JSON.stringify(s)).join(" -> ")}`;
+              expect(target.trim().length, `${trace} emitted an empty target`).toBeGreaterThan(0);
+              expect(
+                estimateLongestLineWidth(target, profile),
+                `${trace} grew instead of converging`,
+              ).toBeLessThanOrEqual(previousWidth);
+            }
+          }
+        }
+      }
+    });
+
+    // The same two invariants as a property, over the shapes the pipeline
+    // actually sees: placeholder-carrying strings, padded strings, punctuation
+    // and multi-word copy, in every script family, driven past the point where
+    // shrinking stops helping.
+    it("holds the non-empty and non-growing invariants for every shape and script", () => {
+      const sources = [
+        "A",
+        "Save",
+        "Save changes",
+        "Restore all defaults now",
+        "Deleted {count} items from {name}",
+        "%s of %s",
+        "  Save  ",
+        "Save/Load",
+      ];
+      const roles: UiRole[] = ["button", "badge", "menu", "toast", "body"];
+      const locales: LocaleCode[] = ["de", "ru", "ja", "he", "ko", "zh", "ar", "th", "fi"];
+
+      for (const locale of locales) {
+        const profile = getLocaleProfile(locale);
+        const context = contextFor(locale);
+
+        for (const role of roles) {
+          for (const source of sources) {
+            let target = simulateTranslation(
+              makeUnit({ key: "b.k", source, role, locale: profile }),
+              context,
+            ).target;
+            let fit = evaluateFit(source, target, role, profile);
+
+            for (let attempt = 0; attempt < 6; attempt += 1) {
+              const previous = target;
+              const previousWidth = estimateLongestLineWidth(previous, profile);
+              target = simulateTranslation(
+                makeUnit({
+                  key: "b.k",
+                  source,
+                  role,
+                  locale: profile,
+                  previousAttempt: previous,
+                  repairFeedback: describeFitForRepair(fit, profile),
+                }),
+                context,
+              ).target;
+              fit = evaluateFit(source, target, role, profile);
+
+              const trace = `${locale}/${role} ${JSON.stringify(source)} round ${attempt + 1}: ${JSON.stringify(previous)} -> ${JSON.stringify(target)}`;
+              expect(target.trim().length, `${trace} emptied the string`).toBeGreaterThan(0);
+              expect(
+                estimateLongestLineWidth(target, profile),
+                `${trace} grew`,
+              ).toBeLessThanOrEqual(previousWidth);
+            }
+          }
+        }
+      }
+    });
+
+    it("stalls on the previous attempt instead of deleting the last word", () => {
+      const profile = getLocaleProfile("de");
+      const context = contextFor("de");
+      // "OK" renders as a single syllable already, so there is nothing left to
+      // shrink: the repair must hand the same string back, not an empty one.
+      const first = simulateTranslation(
+        makeUnit({ key: "b.ok", source: "OK", role: "button", locale: profile }),
+        context,
+      ).target;
+      const repaired = simulateTranslation(
+        makeUnit({
+          key: "b.ok",
+          source: "OK",
+          role: "button",
+          locale: profile,
+          previousAttempt: first,
+          repairFeedback: "Too long. Cut at least 2 characters.",
+        }),
+        context,
+      );
+      expect(repaired.target).toBe(first);
+      expect(repaired.rationale).not.toMatch(/shortened to fit/);
+      expect(repaired.rationale).toMatch(/could not be shortened further/);
+    });
+
+    it("never propagates a blank previous attempt back out", () => {
+      const result = simulateTranslation(
+        makeUnit({
+          key: "b.k",
+          source: "Save",
+          role: "button",
+          locale: "de",
+          previousAttempt: "",
+          repairFeedback: "Previous attempt was empty.",
+        }),
+        contextFor("de"),
+      );
+      expect(result.target.trim().length).toBeGreaterThan(0);
     });
 
     it("labels the repair in its rationale", () => {

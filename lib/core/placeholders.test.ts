@@ -38,9 +38,10 @@ describe("extractPlaceholders", () => {
     expect(found[0]).toMatchObject({ kind: "dollar-brace", token: "user" });
   });
 
-  it("consumes a whole ICU plural block once, not its inner sub-messages", () => {
+  it("counts an ICU plural block once, and still sees inside its branches", () => {
     const value = "{count, plural, one {# item} other {# items}}";
     const found = extractPlaceholders(value);
+    // The block is ONE placeholder for the argument itself...
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({
       raw: value,
@@ -48,6 +49,13 @@ describe("extractPlaceholders", () => {
       token: "count",
       index: 0,
     });
+    // ...but its sub-messages are messages, not opaque payload: placeholders
+    // living in a branch are reported too, or a translator could drop them
+    // undetected. Full coverage lives in icu.test.ts.
+    const nested = extractPlaceholders(
+      "{count, plural, one {# item for {name}} other {# items for {name}}}",
+    );
+    expect(nested.map((p) => p.token)).toEqual(["count", "name", "name"]);
   });
 
   it("recognises index arguments as unreal placeholders", () => {
@@ -159,5 +167,21 @@ describe("stripPlaceholders", () => {
 
   it("is a no-op when there are no placeholders", () => {
     expect(stripPlaceholders("plain", [])).toBe("plain");
+  });
+
+  it("keeps ICU branch prose while removing the skeleton", () => {
+    const value = "{count, plural, one {# seat} other {# seats}}";
+    const residue = stripPlaceholders(value, extractPlaceholders(value));
+    expect(residue.trim()).not.toBe("");
+    expect(residue).toContain("seat");
+    expect(residue).not.toMatch(/[{}#]|count|plural/);
+  });
+
+  it("subtracts a nested span only once", () => {
+    const value = "{n, plural, one {# of {total}} other {# of {total}}}";
+    const residue = stripPlaceholders(value, extractPlaceholders(value));
+    // Each branch contributes "  of " (the `#` and `{total}` blanked out),
+    // joined by a single space — no region is subtracted twice.
+    expect(residue).toBe("  of    of ");
   });
 });

@@ -332,6 +332,67 @@ describe("truncateToWidth — structural enforcement", () => {
     );
   });
 
+  it("never cuts inside a preserved span that contains a space", () => {
+    // `{name}` has no internal space, so it cannot catch this: the
+    // word-boundary retreat can only walk a cut back into a span when the span
+    // has a space to walk to. Every shape below does, and each is a syntax
+    // `lib/types.ts` declares as a `PlaceholderKind`.
+    //
+    // `sentinel` is a character that occurs nowhere in the text except inside
+    // the span. Truncation only ever emits a prefix of the input, so any
+    // surviving fragment of the span is a prefix of it and therefore contains
+    // the sentinel — which makes "sentinel present without the whole span" an
+    // exact detector for a split placeholder.
+    const cases: Array<{ text: string; span: string; sentinel: string }> = [
+      { text: "Go {{ user }} now", span: "{{ user }}", sentinel: "{" },
+      {
+        text: "Hi {count, plural, one {#} other {#}} left",
+        span: "{count, plural, one {#} other {#}}",
+        sentinel: "{",
+      },
+      {
+        text: "Hallo %(user name)s, willkommen",
+        span: "%(user name)s",
+        sentinel: "%",
+      },
+      {
+        text: 'Open <b class="x">now please',
+        span: '<b class="x">',
+        sentinel: "<",
+      },
+    ];
+
+    for (const { text, span, sentinel } of cases) {
+      expect(text.split(sentinel).length - 1).toBe(
+        span.split(sentinel).length - 1,
+      );
+
+      // Sweep the whole budget range: the bug only shows at the budgets where
+      // the natural cut happens to land at or inside the span, a narrow window
+      // that a single hand-picked width misses.
+      const full = estimateLongestLineWidth(text, de);
+      for (let step = 2; step <= Math.ceil(full * 10) + 5; step += 1) {
+        const budget = step / 10;
+        const result = truncateToWidth(text, budget, de, { preserve: [span] });
+        const label = `budget=${budget.toFixed(1)} -> ${JSON.stringify(result.text)}`;
+        if (result.text.includes(sentinel)) {
+          expect(result.text.includes(span), label).toBe(true);
+        }
+        expect(result.width, label).toBeLessThanOrEqual(budget);
+      }
+    }
+  });
+
+  it("keeps retreating when escaping one span lands inside another", () => {
+    // Overlapping spans: retreating to the start of "cd ef" lands inside
+    // "ab cd", which the loop had already passed. One pass stops at offset 6
+    // and emits "xx ab…" — half of a preserved span.
+    const result = truncateToWidth("xx ab cd ef yy", 5.05, de, {
+      preserve: ["ab cd", "cd ef"],
+    });
+    expect(result.text).toBe("xx…");
+  });
+
   it("supports a hard clip with no ellipsis", () => {
     const result = truncateToWidth("Speichern", 2, de, { ellipsis: "" });
     expect(result.text.endsWith("…")).toBe(false);

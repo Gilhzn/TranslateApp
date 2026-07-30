@@ -7,6 +7,8 @@
  * collect it as a suite.
  */
 
+import type { LocaleProfile } from "@/lib/types";
+
 /** mulberry32 — small, fast, well-distributed for test-sized sample counts. */
 export function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -89,4 +91,56 @@ export function randomString(
   let out = "";
   for (let i = 0; i < length; i += 1) out += pick(random, alphabet);
   return out;
+}
+
+/**
+ * One representative letter of the script `profile` is written in.
+ *
+ * Used to build the most charitable translation a model could possibly return
+ * at a stated character limit — `maxChars` copies of an ordinary letter of the
+ * target script, with no wide capitals and no punctuation. If even that string
+ * overflows, the limit the module advertised was never satisfiable.
+ *
+ * Chosen per script rather than per language: everything that shares a script
+ * shares an advance table entry, so one letter per script is enough to cover
+ * the whole catalog.
+ */
+export function typicalCharOf(profile: LocaleProfile): string {
+  const language = profile.code.split("-")[0]?.toLowerCase() ?? "";
+  switch (language) {
+    case "ja":
+    case "zh":
+      return "定"; // CJK Unified Ideograph — full em square
+    case "ko":
+      return "한"; // Hangul syllable — also full width
+    case "ar":
+    case "fa":
+    case "ur":
+    case "ps":
+    case "ckb":
+      return "م";
+    case "he":
+    case "yi":
+      return "ש";
+    case "el":
+      return "α";
+    case "ru":
+    case "uk":
+    case "bg":
+    case "sr":
+    case "mk":
+      return "е"; // Cyrillic ie, not Latin e
+    case "th":
+      return "ก";
+    case "hi":
+    case "mr":
+    case "ne":
+      return "क";
+    case "bn":
+      return "ক";
+    case "ta":
+      return "க";
+    default:
+      return "e";
+  }
 }

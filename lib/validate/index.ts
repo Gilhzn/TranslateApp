@@ -44,6 +44,7 @@ export type { IssueDetail, IssueOptions, IssueSummary, LingoLoopErrorOptions } f
 export {
   STRING_VALIDATORS,
   issuesFromFit,
+  parseAngleTag,
   placeholderIdentity,
   validateCasingDrift,
   validateControlCharacters,
@@ -55,7 +56,7 @@ export {
   validateUntranslated,
   validateWhitespaceDrift,
 } from "./validators";
-export type { ValidationContext } from "./validators";
+export type { AngleTagShape, ValidationContext } from "./validators";
 
 export {
   assertStructuralParity,

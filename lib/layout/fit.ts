@@ -271,19 +271,6 @@ export function truncateToWidth(
 
   let cut = offset;
 
-  // Retreat out of any preserved span the cut landed inside.
-  const preserve = options.preserve ?? [];
-  for (const span of preserve) {
-    if (span.length === 0) continue;
-    let from = 0;
-    for (;;) {
-      const at = text.indexOf(span, from);
-      if (at === -1) break;
-      if (cut > at && cut < at + span.length) cut = at;
-      from = at + span.length;
-    }
-  }
-
   // Prefer a word boundary where the script has one. The one-third guard stops
   // a long unbreakable word from collapsing the whole string to its first
   // syllable: retreating past two thirds of the budget wastes more space than
@@ -291,6 +278,40 @@ export function truncateToWidth(
   if (!profile.noWordBreaks) {
     const lastSpace = text.lastIndexOf(" ", Math.max(0, cut - 1));
     if (lastSpace > 0 && lastSpace >= cut / 3) cut = lastSpace;
+  }
+
+  // Retreat out of any preserved span the cut landed inside.
+  //
+  // This must run *after* the word-boundary retreat, not before it. Preserved
+  // spans routinely contain spaces — "{{ user }}", "%(user name)s",
+  // "{count, plural, one {#} other {#}}" — so a word-boundary retreat applied
+  // afterwards walks the cut straight back into the middle of the span it just
+  // escaped, emitting a half-placeholder. The documented guarantee is that a
+  // cut never lands inside a preserved span, so this is the retreat that has
+  // to run last and win.
+  //
+  // Iterated because retreating to the start of one span can land inside an
+  // earlier overlapping or enclosing one (nested ICU is exactly that shape).
+  // `cut` strictly decreases on every pass that moves it, and each pass takes
+  // at least one span permanently out of range, so `preserve.length` passes are
+  // always enough and the loop cannot spin.
+  const preserve = options.preserve ?? [];
+  for (let pass = 0; pass <= preserve.length; pass += 1) {
+    let moved = false;
+    for (const span of preserve) {
+      if (span.length === 0) continue;
+      let from = 0;
+      for (;;) {
+        const at = text.indexOf(span, from);
+        if (at === -1) break;
+        if (cut > at && cut < at + span.length) {
+          cut = at;
+          moved = true;
+        }
+        from = at + span.length;
+      }
+    }
+    if (!moved) break;
   }
 
   // Snap back to a legal code point boundary at or below `cut`.

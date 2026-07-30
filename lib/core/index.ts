@@ -23,7 +23,15 @@ export {
 
 export { encodeKey, decodeKey, KeyDecodeError } from "./keys";
 
-export { extractPlaceholders, stripPlaceholders } from "./placeholders";
+export {
+  extractPlaceholders,
+  stripPlaceholders,
+  topLevelPlaceholders,
+  parseComplexIcuArgument,
+  type IcuComplexArgument,
+  type IcuComplexFormat,
+  type IcuSubMessage,
+} from "./placeholders";
 
 export { inferRole, tokenizeSegment } from "./roles";
 

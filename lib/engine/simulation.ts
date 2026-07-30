@@ -27,7 +27,10 @@
  *     up. Some strings therefore genuinely overflow their budget, which is the
  *     point: the layout engine and the repair loop need something to catch.
  *   - On a repair pass it produces a strictly shorter string than the attempt
- *     that was rejected, so the repair loop provably converges.
+ *     that was rejected, so the repair loop provably converges. When the string
+ *     is already at its floor it returns the previous attempt unchanged — never
+ *     an empty string, and never something wider than what it replaced, because
+ *     either of those turns the orchestrator's repair loop into an oscillation.
  */
 
 import { isDoNotTranslate } from "@/lib/core";
@@ -534,14 +537,26 @@ export function simulateTranslation(
     previous.length > 0 ||
     (unit.repairFeedback !== undefined && unit.repairFeedback.length > 0);
 
-  const target = isRepair
-    ? repairRender(renderContext, unit, previous)
-    : renderSegments(renderContext, { factor: 1, roundUp: true });
+  const repair = isRepair ? repairRender(renderContext, unit, previous) : null;
+  const target =
+    repair !== null
+      ? repair.target
+      : renderSegments(renderContext, { factor: 1, roundUp: true });
 
   const translation: ProviderTranslation = { key: unit.key, target };
-  const rationale = explain(unit, segments, isRepair);
+  const rationale = explain(unit, segments, repair);
   if (rationale !== undefined) translation.rationale = rationale;
   return translation;
+}
+
+interface RepairResult {
+  target: string;
+  /**
+   * True only when `target` is genuinely narrower than the attempt it replaces.
+   * False means the string was already at its floor and `target` IS the previous
+   * attempt — the rationale must not claim a shortening that did not happen.
+   */
+  shortened: boolean;
 }
 
 /**
@@ -549,47 +564,92 @@ export function simulateTranslation(
  * the string contains anything that can be shortened, and prefers the widest
  * such result that actually fits the budget — shrinking further than necessary
  * would make the simulation converge on nonsense.
+ *
+ * Two invariants matter more than the shrinking itself, because the orchestrator
+ * feeds each result straight back in as the next `previousAttempt`:
+ *
+ *   1. The result is never empty for a source that carries copy. Deleting the
+ *      string is not a translation, and a zero-width "previous attempt" makes
+ *      every subsequent candidate look like an improvement — the loop then
+ *      re-inflates to full width and oscillates with period 2 forever.
+ *   2. The result is never wider than `previous`. When nothing can be shrunk
+ *      further the honest answer is `previous` itself: a stall the caller ends
+ *      via `maxRepairAttempts`, not a bigger string dressed up as a repair.
+ *
+ * Single-word buttons and badges ("OK", "Free", "min") reach the floor on the
+ * FIRST repair — one syllable is the narrowest thing `makeWord` can render — so
+ * this is the common path for exactly the roles the layout engine squeezes most.
  */
 function repairRender(
   context: RenderContext,
   unit: TranslationUnit,
   previous: string,
-): string {
+): RepairResult {
   const { profile } = context;
   const previousWidth = estimateLongestLineWidth(previous, profile);
   const allowed = unit.allowedWidth;
 
-  const start =
-    previousWidth > 0
-      ? clamp((allowed / previousWidth) * 0.9, MIN_FACTOR, 0.85)
-      : 0.7;
+  /** A source with real copy must come back with real copy. */
+  const mustStayNonEmpty = unit.source.trim().length > 0;
+  /** A blank previous attempt is not a width to undercut — it is no attempt. */
+  const hasPrevious = previousWidth > 0;
 
-  let best: string | null = null;
+  /**
+   * The single gate every returned candidate passes through. Rejecting rather
+   * than clamping keeps the two invariants above local to one place.
+   */
+  const accept = (candidate: string, width: number): RepairResult | null => {
+    if (mustStayNonEmpty && candidate.trim().length === 0) return null;
+    if (hasPrevious && width >= previousWidth) return null;
+    return { target: candidate, shortened: true };
+  };
+
+  const start = hasPrevious
+    ? clamp((allowed / previousWidth) * 0.9, MIN_FACTOR, 0.85)
+    : 0.7;
+
+  let best: RepairResult | null = null;
   let factor = start;
   for (let step = 0; step < MAX_SHRINK_STEPS && factor >= MIN_FACTOR; step += 1) {
     const candidate = renderSegments(context, { factor, roundUp: false });
     const width = estimateLongestLineWidth(candidate, profile);
-    if (previousWidth <= 0 || width < previousWidth) {
-      best = candidate;
-      if (width <= allowed) return candidate;
+    const accepted = accept(candidate, width);
+    if (accepted !== null) {
+      best = accepted;
+      // Prefer the WIDEST candidate that still fits: over-shrinking would make
+      // the simulation converge on a stub rather than on a plausible string.
+      if (width <= allowed) return accepted;
     }
     factor *= SHRINK_STEP;
   }
   if (best !== null) return best;
 
   // Nothing got narrower by shrinking words — the string is mostly immutable
-  // content. Drop generated words from the end, one at a time.
+  // content. Drop generated words from the end, one at a time, but never the
+  // last one: a translation with zero words is a deletion. For a single-word
+  // source this loop therefore does not run at all, which is correct — there is
+  // no word to spare.
   const totalWords = countWords(context.segments);
-  for (let limit = totalWords - 1; limit >= 0; limit -= 1) {
+  for (let limit = totalWords - 1; limit >= 1; limit -= 1) {
     const candidate = collapseSpaces(
       renderSegments(context, { factor: MIN_FACTOR, roundUp: false, maxWords: limit }),
     );
-    if (estimateLongestLineWidth(candidate, profile) < previousWidth) return candidate;
+    const accepted = accept(candidate, estimateLongestLineWidth(candidate, profile));
+    if (accepted !== null) return accepted;
   }
 
-  // Everything left is placeholders or glossary terms; there is nothing this
-  // provider may legally remove. Returning the previous attempt is honest.
-  return previous;
+  // Terminal state: the string is at its floor, or everything left is
+  // placeholders and glossary terms that this provider may not remove.
+  // Handing back the rejected attempt unchanged is honest. The one case where
+  // it is not is a blank previous attempt on a unit that does have copy — then
+  // the narrowest legal render is returned instead of propagating the blank.
+  if (mustStayNonEmpty && previous.trim().length === 0) {
+    return {
+      target: collapseSpaces(renderSegments(context, { factor: MIN_FACTOR, roundUp: false })),
+      shortened: true,
+    };
+  }
+  return { target: previous, shortened: false };
 }
 
 function collapseSpaces(text: string): string {
@@ -600,12 +660,22 @@ function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
 }
 
+/**
+ * One short clause for the review table. `repair` is null on a first pass; on a
+ * repair pass its `shortened` flag decides the wording, because claiming the
+ * string was "shortened to fit" when `repairRender` stalled and handed back the
+ * previous attempt would be a false rationale attached to unchanged output.
+ */
 function explain(
   unit: TranslationUnit,
   segments: readonly Segment[],
-  isRepair: boolean,
+  repair: RepairResult | null,
 ): string | undefined {
-  if (isRepair) return `shortened to fit the ${unit.role} budget`;
+  if (repair !== null) {
+    return repair.shortened
+      ? `shortened to fit the ${unit.role} budget`
+      : `already at its shortest form in this locale; could not be shortened further for the ${unit.role} budget`;
+  }
   const immutables = segments.filter((segment) => segment.kind === "immutable").length;
   if (unit.placeholders.length > 0) {
     return `${unit.placeholders.length} placeholder${unit.placeholders.length === 1 ? "" : "s"} reproduced in source order`;

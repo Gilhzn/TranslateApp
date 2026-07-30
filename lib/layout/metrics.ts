@@ -455,8 +455,13 @@ export function averageCharWidth(
  * Derived from the profile so unknown locales behave sensibly:
  *   Latin/Cyrillic (glyphWidth 1.0)  -> 0.55em
  *   Arabic/Hebrew  (glyphWidth 0.95) -> 0.52em
- *   Devanagari     (glyphWidth 1.05) -> 0.58em
+ *   Indic          (glyphWidth 1.13) -> 0.62em
  *   CJK            (glyphWidth ~2.0) -> the full em square itself
+ *
+ * These must stay in step with `charAdvance`: `budget.ts` divides an allowed
+ * width by this number to advertise a character limit to the model, so any
+ * script where this reads narrower than the table actually measures produces a
+ * limit that `evaluateFit` will then reject as overflow.
  */
 export function typicalCharWidth(profile: LocaleProfile): number {
   if (profile.glyphWidth >= 1.5) return profile.glyphWidth;

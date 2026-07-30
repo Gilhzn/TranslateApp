@@ -310,6 +310,14 @@ function allowedWidthFromParts(
  * `evaluateFit` remains the sole authority on the verdict. Because of that
  * split the number here is allowed to be mildly conservative: aiming the model
  * a little short costs nothing, whereas aiming it long costs a repair round.
+ *
+ * The one thing it may never be is *optimistic*. `describeBudgetForPrompt`
+ * hands this number to the model as a limit it is entitled to spend in full,
+ * so a value the `allowedWidth` cannot physically hold is an instruction to
+ * overflow — which `evaluateFit` then rejects, burning a repair attempt on a
+ * translation the module itself asked for. Hence the two guards below:
+ * `avgTargetChar` must describe the script the model will actually write in,
+ * and `widthCeilingChars` caps everything, including the floor.
  */
 function characterCeiling(
   source: string,
@@ -321,17 +329,39 @@ function characterCeiling(
   const measured = measureText(source, profile);
   const sourceChars = measured.charCount;
 
-  // Expected mean advance of a *target* character. Half the locale's script
-  // baseline, half the source's own mean — casing is usually preserved in
-  // translation, so an ALL-CAPS source predicts an ALL-CAPS (wider) target.
   const scriptTypical = typicalCharWidth(profile);
   const sourceMean =
     measured.visibleCharCount > 0 && measured.width > 0
       ? measured.width / measured.visibleCharCount
       : scriptTypical;
-  const avgTargetChar = clamp(0.5 * scriptTypical + 0.5 * sourceMean, 0.35, 2.2);
 
-  const widthDerived = Math.floor(allowedWidth / avgTargetChar);
+  // Expected mean advance of a *target* character.
+  //
+  // Same-script target: half the locale's script baseline, half the source's
+  // own mean — casing is usually preserved in translation, so an ALL-CAPS
+  // source predicts an ALL-CAPS (wider) target. The blend is only ever allowed
+  // to push the estimate *up*, though. A narrow source ("Settings" averages
+  // 0.48em against a 0.55em Latin baseline) says nothing about how narrow the
+  // translator's word choice will be — "Einstellungen" is full of wide letters
+  // — so predicting a below-baseline target from it is an optimism the fit
+  // engine does not share, and optimism here is what puts an unfittable number
+  // in front of the model.
+  //
+  // Full-width target: the blend is invalid outright. It is Latin-script
+  // reasoning and it does not survive the script boundary. The source's mean is
+  // the mean of *English* letters (~0.55em); every character the model will
+  // actually emit is a full em square (1.9-2.0em). Blending the two yields
+  // ~1.25em/char, about 64% of the truth, and `maxChars` then advertises
+  // 1.5x-3x more characters than `allowedWidth` admits. CJK has no casing for
+  // the blend to track, so the script baseline alone is correct and sufficient.
+  const blended = 0.5 * scriptTypical + 0.5 * sourceMean;
+  const avgTargetChar = isFullWidthScript(profile)
+    ? scriptTypical
+    : clamp(Math.max(scriptTypical, blended), 0.35, 2.2);
+
+  // How many such characters `allowedWidth` physically holds. This is the
+  // authority: no term below may raise the answer above it.
+  const widthCeilingChars = Math.floor(allowedWidth / avgTargetChar);
 
   // Floor: the number below which the instruction becomes unsatisfiable.
   const floorChars = isFullWidthScript(profile)
@@ -342,9 +372,16 @@ function characterCeiling(
     : sourceChars + shortSourceCharHeadroom(sourceChars);
 
   const capped =
-    spec.hardCap === null ? widthDerived : Math.min(spec.hardCap, widthDerived);
+    spec.hardCap === null
+      ? widthCeilingChars
+      : Math.min(spec.hardCap, widthCeilingChars);
 
-  return Math.max(1, floorChars, capped);
+  // The floor exists to keep the instruction satisfiable, not to override the
+  // measured budget: it may raise the limit up to what the width admits and no
+  // further. `Math.max(1, ...)` keeps the copy grammatical for the degenerate
+  // case where not even one character fits — the string is unshippable at that
+  // size either way, and telling the model "maximum 0 characters" helps nobody.
+  return Math.max(1, Math.min(Math.max(floorChars, capped), widthCeilingChars));
 }
 
 /**

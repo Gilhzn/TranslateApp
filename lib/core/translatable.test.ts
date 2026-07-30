@@ -53,6 +53,15 @@ describe("classifyNonTranslatable", () => {
     expect(classify("{0} - {1}")).toBeNull();
   });
 
+  it("never flags an ICU plural or select message as placeholder-only", () => {
+    // The branch bodies are human copy. Skipping these ships English into
+    // every target locale — see icu.test.ts for the full regression suite.
+    expect(classify("{count, plural, one {# seat} other {# seats}}")).toBeNull();
+    expect(
+      classify("{gender, select, male {He} female {She} other {They}}"),
+    ).toBeNull();
+  });
+
   it("keeps real copy translatable", () => {
     expect(classify("Save")).toBeNull();
     expect(classify("Visit https://example.com for details")).toBeNull();

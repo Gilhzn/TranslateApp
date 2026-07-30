@@ -9,9 +9,10 @@ import {
   planLength,
   roleSpec,
 } from "./budget";
-import { getLocaleProfile } from "./locales";
+import { evaluateFit } from "./fit";
+import { LOCALE_PROFILES, getLocaleProfile } from "./locales";
 import { estimateWidth, measureText } from "./metrics";
-import { makeRandom, pick, randomString } from "./testing";
+import { makeRandom, pick, randomString, typicalCharOf } from "./testing";
 
 const ALL_ROLES: readonly UiRole[] = [
   "button",
@@ -179,11 +180,178 @@ describe("budgetForRole — absolute headroom for very short sources", () => {
   });
 
   it("does not hand CJK Latin-style character headroom", () => {
-    // "OK" in Japanese must not be told it may use 6 characters: 6 CJK glyphs
-    // are 11.7em, nearly three times the button budget.
+    // "OK" as a Japanese button: allowedWidth is 4.525em and a Japanese glyph
+    // is 1.95em, so exactly two characters fit. 3 was the answer before the
+    // budget/fit coherence fix, and it was wrong by measurement — 3 glyphs are
+    // 5.85em, 29% past the allowance — not merely aggressive. Anything above 2
+    // instructs the model to overflow and then rejects it for obeying.
     const budget = budgetForRole("button", "OK", ja);
-    expect(budget.maxChars).toBeLessThanOrEqual(3);
-    expect(budget.maxChars).toBeGreaterThanOrEqual(2);
+    expect(budget.maxChars).toBe(2);
+    expect(estimateWidth("定".repeat(2), ja)).toBeLessThanOrEqual(
+      allowedWidthFor("OK", "button", ja),
+    );
+    expect(estimateWidth("定".repeat(3), ja)).toBeGreaterThan(
+      allowedWidthFor("OK", "button", ja),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The load-bearing invariant: the budget half and the fit half must agree.
+// ---------------------------------------------------------------------------
+
+describe("budgetForRole — coherence with evaluateFit (property)", () => {
+  /**
+   * `describeBudgetForPrompt` puts `maxChars` in front of the model as
+   * "Maximum N characters", i.e. a limit it is entitled to spend in full. So
+   * the most charitable translation the model can return at that limit — N
+   * ordinary letters of the target script, no wide capitals, no punctuation —
+   * must not then be rejected by `evaluateFit`.
+   *
+   * When this fails the module contradicts itself on its main path: the prompt
+   * asks for a string, the fit engine rejects it, the repair loop burns its
+   * attempts arguing with an instruction the module wrote, and `enforceFit`
+   * clips the survivor mid-word. That is the exact failure the length engine
+   * exists to prevent, so it is checked exhaustively rather than by sampling:
+   * every catalog locale x every capped role x a spread of real UI sources.
+   */
+  const CAPPED_ROLES: readonly UiRole[] = ALL_ROLES.filter(
+    (role) => roleSpec(role).hardCap !== null,
+  );
+
+  const SOURCES = [
+    "OK", // 2 chars: absolute headroom dominates
+    "Save",
+    "Cancel",
+    "Settings", // narrow lowercase — mean advance well under the Latin baseline
+    "Export data",
+    "Sign in with Google", // long enough that the ratio term dominates
+  ] as const;
+
+  it("never advertises a limit that evaluateFit rejects", () => {
+    const codes = Object.keys(LOCALE_PROFILES);
+    // Guards the loop itself: an empty catalog would make this vacuously green.
+    expect(codes.length).toBeGreaterThanOrEqual(48);
+    expect(CAPPED_ROLES.length).toBeGreaterThanOrEqual(7);
+
+    let combinations = 0;
+    for (const code of codes) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) continue;
+      const letter = typicalCharOf(profile);
+
+      for (const role of CAPPED_ROLES) {
+        for (const source of SOURCES) {
+          const budget = budgetForRole(role, source, profile);
+          const limit = budget.maxChars;
+          expect(limit).not.toBeNull();
+          if (limit === null) continue;
+
+          combinations += 1;
+          const target = letter.repeat(limit);
+          const fit = evaluateFit(source, target, role, profile);
+
+          expect(
+            fit.verdict,
+            `${code}/${role} "${source}": maxChars=${limit} renders at ` +
+              `${fit.targetWidth}em against allowedWidth ${fit.allowedWidth}em`,
+          ).not.toBe("overflow");
+        }
+      }
+    }
+    expect(combinations).toBeGreaterThanOrEqual(1764);
+  });
+
+  it("keeps the same promise for the number planLength suggests", () => {
+    // `suggestedMaxChars` is the same number for wrapping roles, where
+    // `maxChars` is null but the prompt engine still wants a figure.
+    for (const code of Object.keys(LOCALE_PROFILES)) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) continue;
+      const letter = typicalCharOf(profile);
+      for (const role of ALL_ROLES) {
+        for (const source of ["OK", "Settings", "Export data"] as const) {
+          const plan = planLength(source, role, profile);
+          const fit = evaluateFit(
+            source,
+            letter.repeat(plan.suggestedMaxChars),
+            role,
+            profile,
+          );
+          expect(
+            fit.verdict,
+            `${code}/${role} "${source}": suggestedMaxChars=${plan.suggestedMaxChars}`,
+          ).not.toBe("overflow");
+        }
+      }
+    }
+  });
+
+  it("keeps the promise the prompt copy actually makes", () => {
+    // The number the model sees is the one parsed out of the instruction, not
+    // `budget.maxChars` directly — describeBudgetForPrompt has its own
+    // fallback path when `maxChars` is null.
+    for (const code of ["de", "ja", "ko", "zh-CN", "ru", "ar", "fi", "el"]) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) throw new Error(`missing profile ${code}`);
+      const letter = typicalCharOf(profile);
+      for (const role of ALL_ROLES.filter((r) => roleSpec(r).hardCap !== null)) {
+        for (const source of ["OK", "Save", "Settings", "Export data"] as const) {
+          const budget = budgetForRole(role, source, profile);
+          const copy = describeBudgetForPrompt(budget, profile, source, role);
+          const match = /^Maximum (\d+) characters/.exec(copy);
+          expect(match, copy).not.toBeNull();
+          const stated = Number(match?.[1] ?? "0");
+          const fit = evaluateFit(source, letter.repeat(stated), role, profile);
+          expect(fit.verdict, `${code}/${role} "${source}": ${copy}`).not.toBe(
+            "overflow",
+          );
+        }
+      }
+    }
+  });
+
+  it("is conservative for full-width scripts specifically", () => {
+    // The regression that motivated all of the above: maxChars was derived
+    // from a 50/50 blend of the CJK em square and the *English* source's mean
+    // advance, overstating the real limit by 1.33x-3.00x for every ja/ko/zh
+    // combination. Pin the corrected numbers so the blend cannot creep back.
+    const cases: Array<[string, UiRole, string, number]> = [
+      ["ja", "button", "Save", 2],
+      ["ja", "badge", "Save", 1],
+      ["ko", "badge", "Settings", 2],
+      ["zh-CN", "button", "OK", 2],
+    ];
+    for (const [code, role, source, expected] of cases) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) throw new Error(`missing profile ${code}`);
+      expect(
+        budgetForRole(role, source, profile).maxChars,
+        `${code}/${role} "${source}"`,
+      ).toBe(expected);
+    }
+  });
+
+  it("still lets a full-width limit use the width it is given", () => {
+    // Conservative must not collapse into useless: the advertised limit has to
+    // stay within one glyph of everything that physically fits, otherwise the
+    // model is aimed so short that it drops meaning.
+    for (const code of ["ja", "ko", "zh-CN", "zh-TW"]) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) throw new Error(`missing profile ${code}`);
+      const letter = typicalCharOf(profile);
+      for (const role of ["button", "badge", "menu", "label"] as const) {
+        for (const source of ["OK", "Save", "Settings", "Export data"] as const) {
+          const limit = budgetForRole(role, source, profile).maxChars ?? 0;
+          const allowed = allowedWidthFor(source, role, profile);
+          // One more glyph than advertised must genuinely not fit.
+          expect(
+            estimateWidth(letter.repeat(limit + 1), profile),
+            `${code}/${role} "${source}" is aimed too short at ${limit}`,
+          ).toBeGreaterThan(allowed);
+        }
+      }
+    }
   });
 });
 

@@ -86,6 +86,157 @@ function sourcePlaceholdersOf(
 // Placeholder parity
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Angle-tag shape (name + attributes)
+// ---------------------------------------------------------------------------
+
+/**
+ * The parsed form of an angle-tag placeholder.
+ *
+ * Attributes matter for parity because `<a href="/terms">` and
+ * `<a href="/bedingungen">` are *not* the same tag: the second one is a 404 in
+ * production. The extractor keeps the full tag in `Placeholder.raw` but
+ * normalises `token` to the element name alone, so anything that compares tags
+ * has to re-parse `raw` — which is what this does.
+ */
+export interface AngleTagShape {
+  /** Element name exactly as written, e.g. "a", "Link", "0". */
+  name: string;
+  closing: boolean;
+  selfClosing: boolean;
+  /**
+   * Attribute name → value. Names are lowercased (HTML attribute names are
+   * case-insensitive); values are kept verbatim, minus the quotes.
+   *
+   * A valueless boolean attribute (`<input disabled>`) normalises to `""`
+   * because HTML defines `disabled` and `disabled=""` as the same thing —
+   * treating them as different would fire on correct markup.
+   *
+   * Insertion order is the source order, but callers must treat attribute
+   * ORDER as insignificant: `<a href="/t" id="x">` and `<a id="x" href="/t">`
+   * are the same element.
+   */
+  attributes: Map<string, string>;
+}
+
+function isSpaceChar(ch: string | undefined): boolean {
+  return ch !== undefined && /\s/.test(ch);
+}
+
+/**
+ * Parse the attribute list of a tag body (everything after the element name and
+ * before the closing `>`/`/>`).
+ *
+ * Hand-written rather than regex-driven because all four real-world spellings
+ * have to survive: `href="/a"`, `href='/a'`, `href=/a` (unquoted) and a bare
+ * `disabled`. Duplicate names keep the FIRST occurrence, matching how browsers
+ * resolve them.
+ */
+function parseTagAttributes(body: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let i = 0;
+
+  while (i < body.length) {
+    const ch = body[i];
+    if (ch === undefined) break;
+    if (isSpaceChar(ch) || ch === "/") {
+      i += 1;
+      continue;
+    }
+
+    const nameStart = i;
+    while (i < body.length) {
+      const c = body[i];
+      if (c === undefined || isSpaceChar(c) || c === "=" || c === "/") break;
+      i += 1;
+    }
+    const name = body.slice(nameStart, i).toLowerCase();
+    if (name.length === 0) {
+      i += 1;
+      continue;
+    }
+
+    let cursor = i;
+    while (cursor < body.length && isSpaceChar(body[cursor])) cursor += 1;
+
+    if (body[cursor] !== "=") {
+      // Valueless boolean attribute. Do not consume the whitespace run — the
+      // outer loop skips it — but do resume from where the lookahead stopped.
+      if (!out.has(name)) out.set(name, "");
+      i = cursor;
+      continue;
+    }
+
+    cursor += 1; // past "="
+    while (cursor < body.length && isSpaceChar(body[cursor])) cursor += 1;
+
+    const quote = body[cursor];
+    if (quote === '"' || quote === "'") {
+      const close = body.indexOf(quote, cursor + 1);
+      const end = close < 0 ? body.length : close;
+      if (!out.has(name)) out.set(name, body.slice(cursor + 1, end));
+      i = close < 0 ? body.length : close + 1;
+      continue;
+    }
+
+    let end = cursor;
+    while (end < body.length && !isSpaceChar(body[end])) end += 1;
+    if (!out.has(name)) out.set(name, body.slice(cursor, end));
+    i = end;
+  }
+
+  return out;
+}
+
+/** `<`, an optional `/`, then the element name. */
+const RE_TAG_HEAD = /^<(\/?)\s*([A-Za-z][A-Za-z0-9_.:-]*|\d+)/;
+
+/**
+ * Parse an angle-tag placeholder's `raw` into name + attributes.
+ *
+ * Returns `null` for anything that is not a tag, so callers can fall back to
+ * name-only behaviour rather than inventing a shape for garbage input.
+ */
+export function parseAngleTag(raw: string): AngleTagShape | null {
+  const head = RE_TAG_HEAD.exec(raw);
+  if (head === null) return null;
+  const name = head[2];
+  if (name === undefined) return null;
+
+  // The extractor's tag pattern forbids `<`/`>` inside the attribute run, so
+  // the last `>` is always the tag terminator.
+  const close = raw.lastIndexOf(">");
+  const bodyEnd = close >= head[0].length ? close : raw.length;
+  let body = raw.slice(head[0].length, bodyEnd);
+
+  let selfClosing = false;
+  const trimmed = body.trimEnd();
+  if (trimmed.endsWith("/")) {
+    selfClosing = true;
+    body = trimmed.slice(0, -1);
+  }
+
+  return {
+    name,
+    closing: head[1] === "/",
+    selfClosing,
+    attributes: parseTagAttributes(body),
+  };
+}
+
+/**
+ * Canonical attribute rendering for identity purposes: sorted by name so
+ * ordering is insignificant, and JSON-quoted so quote style and embedded
+ * quotes cannot collide (`title='He said "hi"'` vs `title="He said &quot;hi"`).
+ */
+function serialiseAttributes(attributes: ReadonlyMap<string, string>): string {
+  if (attributes.size === 0) return "";
+  const parts = [...attributes.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, value]) => `${name}=${JSON.stringify(value)}`);
+  return `[${parts.join(" ")}]`;
+}
+
 /**
  * Parity identity of a placeholder.
  *
@@ -94,12 +245,28 @@ function sourcePlaceholdersOf(
  * placeholder. Angle tags additionally distinguish open / close / self-closing,
  * so `<b>` and `</b>` are two different obligations rather than one counted
  * twice.
+ *
+ * An OPENING tag's attributes are part of its identity: `<a href="/terms">` and
+ * `<a href="/bedingungen">` point at different pages, and a translation that
+ * "helpfully" localises the URL ships a dead link. Closing tags carry no
+ * attributes, and attribute-free tags (`<b>`, `<0>`) serialise to exactly the
+ * string they always did — so react-i18next `<Trans>` catalogues are unaffected.
  */
 export function placeholderIdentity(p: Placeholder): string {
   if (p.kind === "angle-tag") {
-    if (p.raw.startsWith("</")) return `angle:/${p.token}`;
-    if (/\/\s*>$/.test(p.raw)) return `angle:${p.token}/`;
-    return `angle:${p.token}`;
+    const shape = parseAngleTag(p.raw);
+    if (shape === null) {
+      // Unparseable: fall back to the name-only identity rather than treating
+      // every malformed tag as its own unique obligation.
+      if (p.raw.startsWith("</")) return `angle:/${p.token}`;
+      if (/\/\s*>$/.test(p.raw)) return `angle:${p.token}/`;
+      return `angle:${p.token}`;
+    }
+    if (shape.closing) return `angle:/${p.token}`;
+    const attrs = serialiseAttributes(shape.attributes);
+    return shape.selfClosing
+      ? `angle:${p.token}${attrs}/`
+      : `angle:${p.token}${attrs}`;
   }
   return `${p.kind}:${p.token}`;
 }
@@ -185,6 +352,171 @@ function strayBraceCount(value: string, list: readonly Placeholder[]): number {
   return count;
 }
 
+// ---------------------------------------------------------------------------
+// Angle-tag attribute parity
+// ---------------------------------------------------------------------------
+
+interface OpeningTag {
+  placeholder: Placeholder;
+  shape: AngleTagShape;
+}
+
+/**
+ * Non-closing angle tags, bucketed by element name and self-closing form.
+ *
+ * The bucket key deliberately excludes attributes — pairing has to happen
+ * BEFORE attributes are compared. Self-closing form is part of the key because
+ * `<img/>` and `<img>` already differ in identity, so pairing them would report
+ * an attribute diff on top of a shape diff for the same mistake.
+ */
+function groupOpeningTags(
+  list: readonly Placeholder[],
+): Map<string, OpeningTag[]> {
+  const groups = new Map<string, OpeningTag[]>();
+  for (const p of list) {
+    if (p.kind !== "angle-tag") continue;
+    const shape = parseAngleTag(p.raw);
+    if (shape === null || shape.closing) continue;
+    const key = `${shape.name.toLowerCase()}${shape.selfClosing ? "/" : ""}`;
+    const bucket = groups.get(key);
+    if (bucket === undefined) groups.set(key, [{ placeholder: p, shape }]);
+    else bucket.push({ placeholder: p, shape });
+  }
+  return groups;
+}
+
+type AttributeReason =
+  | "attribute-drift"
+  | "attribute-missing"
+  | "attribute-added";
+
+interface AttributeDiff {
+  attribute: string;
+  /** Source value; `null` when the source has no such attribute. */
+  expected: string | null;
+  /** Target value; `null` when the target dropped it. */
+  actual: string | null;
+  reason: AttributeReason;
+}
+
+/** Ordered, deterministic diff: source attributes first, then target-only ones. */
+function diffAttributes(
+  source: ReadonlyMap<string, string>,
+  target: ReadonlyMap<string, string>,
+): AttributeDiff[] {
+  const out: AttributeDiff[] = [];
+  const names = [...source.keys()].sort();
+  for (const attribute of names) {
+    const expected = source.get(attribute);
+    if (expected === undefined) continue;
+    const actual = target.get(attribute);
+    if (actual === undefined) {
+      out.push({ attribute, expected, actual: null, reason: "attribute-missing" });
+    } else if (actual !== expected) {
+      out.push({ attribute, expected, actual, reason: "attribute-drift" });
+    }
+  }
+  for (const attribute of [...target.keys()].sort()) {
+    if (source.has(attribute)) continue;
+    const actual = target.get(attribute);
+    if (actual === undefined) continue;
+    out.push({ attribute, expected: null, actual, reason: "attribute-added" });
+  }
+  return out;
+}
+
+function attributeIssue(
+  source: OpeningTag,
+  diff: AttributeDiff,
+  ctx: ValidationContext | undefined,
+): Issue {
+  const tag = `<${source.shape.name}>`;
+  const exactly = `reproduce the tag exactly as ${source.placeholder.raw}.`;
+  const notContent = "Attribute values are not translatable content";
+
+  let message: string;
+  if (diff.reason === "attribute-drift") {
+    message =
+      `The ${tag} tag's ${diff.attribute} attribute changed from ` +
+      `${JSON.stringify(diff.expected ?? "")} to ${JSON.stringify(diff.actual ?? "")}. ` +
+      `${notContent} — ${exactly}`;
+  } else if (diff.reason === "attribute-missing") {
+    message =
+      `The ${tag} tag lost its ${diff.attribute} attribute ` +
+      `(${diff.attribute}=${JSON.stringify(diff.expected ?? "")}). ` +
+      `${notContent} — ${exactly}`;
+  } else {
+    message =
+      `The ${tag} tag gained a ${diff.attribute} attribute ` +
+      `(${diff.attribute}=${JSON.stringify(diff.actual ?? "")}) that the source does not have. ` +
+      `${notContent} — ${exactly}`;
+  }
+
+  return classify(
+    "placeholder-malformed",
+    message,
+    opts(ctx, {
+      raw: source.placeholder.raw,
+      token: source.placeholder.token,
+      kind: source.placeholder.kind,
+      attribute: diff.attribute,
+      expected: diff.expected,
+      actual: diff.actual,
+      reason: diff.reason,
+    }),
+  );
+}
+
+/**
+ * Compare the attributes of tags that the target *did* reproduce.
+ *
+ * Runs BEFORE the multiset comparison and records the identities it explains,
+ * because an attribute edit changes a tag's identity and would otherwise
+ * surface as the baffling pair "`<a href="/terms">` is missing" +
+ * "`<a href="/bedingungen">` was added" for what is one mistake with one fix.
+ *
+ * Tags are paired by element name and position-in-sequence, NOT by attributes:
+ * that is what makes two sibling links with their hrefs swapped report as two
+ * attribute changes. Pairing by attribute value would match them up and see
+ * nothing wrong, which is the exact bug this check exists to close. Surplus
+ * tags on either side are left to the missing/added checks, where "the tag
+ * itself is absent" is the accurate description.
+ */
+function checkTagAttributes(
+  sourceList: readonly Placeholder[],
+  targetList: readonly Placeholder[],
+  ctx: ValidationContext | undefined,
+  explainedIdentities: Set<string>,
+): Issue[] {
+  const issues: Issue[] = [];
+  const sourceGroups = groupOpeningTags(sourceList);
+  if (sourceGroups.size === 0) return issues;
+  const targetGroups = groupOpeningTags(targetList);
+
+  for (const [key, sourceTags] of sourceGroups) {
+    const targetTags = targetGroups.get(key);
+    if (targetTags === undefined) continue;
+    const pairs = Math.min(sourceTags.length, targetTags.length);
+    for (let i = 0; i < pairs; i++) {
+      const sourceTag = sourceTags[i];
+      const targetTag = targetTags[i];
+      if (sourceTag === undefined || targetTag === undefined) continue;
+      const diffs = diffAttributes(
+        sourceTag.shape.attributes,
+        targetTag.shape.attributes,
+      );
+      if (diffs.length === 0) continue;
+      explainedIdentities.add(placeholderIdentity(sourceTag.placeholder));
+      explainedIdentities.add(placeholderIdentity(targetTag.placeholder));
+      for (const diff of diffs) {
+        issues.push(attributeIssue(sourceTag, diff, ctx));
+      }
+    }
+  }
+
+  return issues;
+}
+
 /**
  * Compare placeholders by normalised token MULTISET, then by order.
  *
@@ -266,10 +598,19 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   // mangled form the model wrote is *the same placeholder*, so reporting it a
   // second time as "added" would be double-counting one mistake.
   const explainedTokens = new Set<string>();
+  /** Identities already accounted for by a more precise attribute report. */
+  const explainedIdentities = new Set<string>();
+
+  // Attribute drift first: it explains identities that would otherwise read as
+  // a missing/added pair.
+  issues.push(
+    ...checkTagAttributes(sourceList, targetList, ctx, explainedIdentities),
+  );
 
   for (const [id, want] of sourceCounts) {
     const have = targetCounts.get(id) ?? 0;
     if (have >= want) continue;
+    if (explainedIdentities.has(id)) continue;
     const example = sourceFirst.get(id);
     if (example === undefined) continue;
 
@@ -314,6 +655,7 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   for (const [id, have] of targetCounts) {
     const want = sourceCounts.get(id) ?? 0;
     if (have <= want) continue;
+    if (explainedIdentities.has(id)) continue;
     const example = targetFirst.get(id);
     if (example === undefined) continue;
     if (want === 0 && explainedTokens.has(example.token)) continue;
@@ -335,7 +677,14 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   }
 
   // --- 5. Ordering ---------------------------------------------------------
-  const orderIssue = checkOrdering(sourceList, targetList, sourceCounts, targetCounts, ctx);
+  const orderIssue = checkOrdering(
+    sourceList,
+    targetList,
+    sourceCounts,
+    targetCounts,
+    ctx,
+    explainedIdentities,
+  );
   if (orderIssue) issues.push(orderIssue);
 
   return issues;
@@ -347,11 +696,16 @@ function checkOrdering(
   sourceCounts: Map<string, number>,
   targetCounts: Map<string, number>,
   ctx: ValidationContext | undefined,
+  explainedIdentities: ReadonlySet<string>,
 ): Issue | null {
   // Only identities with matched counts can meaningfully be "reordered";
-  // anything else is already reported as missing or added.
+  // anything else is already reported as missing or added. Identities whose
+  // attributes already drifted are excluded too: two links with swapped hrefs
+  // are a corruption, not a word-order choice, and reporting "reordered" on top
+  // of the attribute errors would only muddy the repair prompt.
   const comparable = new Set<string>();
   for (const [id, count] of sourceCounts) {
+    if (explainedIdentities.has(id)) continue;
     if (targetCounts.get(id) === count) comparable.add(id);
   }
   if (comparable.size === 0) return null;

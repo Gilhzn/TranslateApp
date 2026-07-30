@@ -107,6 +107,13 @@ function detailString(issue: Issue, field: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** Like {@link detailString} but preserves the empty string, which is a real
+ * attribute value (`href=""` is a link to nowhere, not a missing attribute). */
+function detailText(issue: Issue, field: string): string | null {
+  const value = issue.detail?.[field];
+  return typeof value === "string" ? value : null;
+}
+
 function detailNumber(issue: Issue, field: string): number | null {
   const value = issue.detail?.[field];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -149,6 +156,50 @@ function overflowDirective(
   );
 }
 
+/** Reasons emitted by the angle-tag attribute parity check. */
+const ATTRIBUTE_REASONS: ReadonlySet<string> = new Set([
+  "attribute-drift",
+  "attribute-missing",
+  "attribute-added",
+]);
+
+/**
+ * Instruction for a tag whose attributes changed.
+ *
+ * The generic "reproduce the placeholder exactly" line is not enough here: the
+ * model rewrote the href *because* it read it as content, so the directive has
+ * to say the value verbatim and state the rule that URLs, IDs and attribute
+ * values are never translated.
+ */
+function attributeDirective(issue: Issue, reason: string, tagRaw: string): string {
+  const attribute = detailText(issue, "attribute") ?? "an attribute";
+  const expected = detailText(issue, "expected");
+  const actual = detailText(issue, "actual");
+  const name = detailText(issue, "token");
+  const tag = name !== null && name.length > 0 ? `<${name}>` : "the";
+  const rule =
+    "Never translate, localise or invent URLs, IDs, CSS classes or any other " +
+    "attribute value — only the text between the tags is translatable.";
+
+  if (reason === "attribute-added") {
+    return (
+      `You added ${attribute}=${JSON.stringify(actual ?? "")} to the ${tag} tag, ` +
+      `which the source does not have. Reproduce the tag verbatim as ${tagRaw}. ${rule}`
+    );
+  }
+  if (reason === "attribute-missing") {
+    return (
+      `Your output dropped the ${attribute} attribute of the ${tag} tag. It must be ` +
+      `${attribute}=${JSON.stringify(expected ?? "")}, so reproduce the tag verbatim as ${tagRaw}. ${rule}`
+    );
+  }
+  return (
+    `The ${attribute} attribute of the ${tag} tag must be exactly ` +
+    `${JSON.stringify(expected ?? "")}${actual !== null ? `, but you wrote ${JSON.stringify(actual)}` : ""}. ` +
+    `Reproduce the tag verbatim as ${tagRaw}. ${rule}`
+  );
+}
+
 function placeholderDirective(issue: Issue): string {
   const raw = detailString(issue, "raw");
   const expected = detailNumber(issue, "expected");
@@ -174,6 +225,9 @@ function placeholderDirective(issue: Issue): string {
     }
     case "placeholder-malformed": {
       const reason = detailString(issue, "reason");
+      if (reason !== null && ATTRIBUTE_REASONS.has(reason)) {
+        return attributeDirective(issue, reason, token);
+      }
       if (reason === "full-width-delimiters") {
         return `${token} uses full-width delimiters. Rewrite it with ASCII braces and percent signs exactly as the source has it.`;
       }

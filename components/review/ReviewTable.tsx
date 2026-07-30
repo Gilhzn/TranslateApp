@@ -173,7 +173,11 @@ export function ReviewTable({
   // Row callbacks are hoisted and stable so the memoised rows actually memoise.
   const handleActivate = React.useCallback((index: number) => {
     setActiveIndex(index);
-    gridRef.current?.focus();
+    // `preventScroll` is load-bearing, not a nicety: this fires on mousedown,
+    // and letting the browser scroll the grid into view moves the button out
+    // from under a stationary cursor, so mouseup lands elsewhere and the click
+    // never completes. Without it the first click on any row is swallowed.
+    gridRef.current?.focus({ preventScroll: true });
   }, []);
 
   const handleToggleExpanded = React.useCallback(
@@ -208,12 +212,12 @@ export function ReviewTable({
 
   const handleCommit = React.useCallback(() => {
     commitDraft();
-    gridRef.current?.focus();
+    gridRef.current?.focus({ preventScroll: true });
   }, [commitDraft]);
 
   const handleCancel = React.useCallback(() => {
     setEditing(null);
-    gridRef.current?.focus();
+    gridRef.current?.focus({ preventScroll: true });
   }, []);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

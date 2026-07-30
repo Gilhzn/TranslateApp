@@ -1,0 +1,478 @@
+{
+  "contrast": [
+    {
+      "text": "Ship your UI in 54 languages without breaking th",
+      "color": "rgba(0, 0, 0, 0)",
+      "bg": "rgb(3, 0, 2)",
+      "fontSize": "32px",
+      "weight": "600",
+      "ratio": 1,
+      "required": 3,
+      "pass": false,
+      "sel": "h1.text-gradient.text-[32px].font-semibold"
+    },
+    {
+      "text": "02",
+      "color": "lab(43.332 -0.235021 -4.87669)",
+      "bg": "rgb(3, 0, 2)",
+      "fontSize": "10.5px",
+      "weight": "400",
+      "ratio": 1.1,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.tabular.font-[family-name:var(--font-mono)].text-[10.5px]"
+    },
+    {
+      "text": "01",
+      "color": "lab(43.332 -0.235021 -4.87669)",
+      "bg": "rgb(5, 0, 3)",
+      "fontSize": "11px",
+      "weight": "400",
+      "ratio": 1.1,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.tabular.font-[family-name:var(--font-mono)].text-[11px]"
+    },
+    {
+      "text": "Keys are flattened, placeholders extracted, UI r",
+      "color": "lab(43.332 -0.235021 -4.87669)",
+      "bg": "rgb(5, 0, 3)",
+      "fontSize": "12px",
+      "weight": "400",
+      "ratio": 1.1,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.mt-1.text-[12px].leading-relaxed"
+    },
+    {
+      "text": "AI localization for micro-SaaS and indie games",
+      "color": "lab(43.332 -0.235021 -4.87669)",
+      "bg": "rgb(0, 0, 1)",
+      "fontSize": "12px",
+      "weight": "400",
+      "ratio": 1.11,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.hidden.text-[12px].text-[var(--text-tertiary)]"
+    },
+    {
+      "text": "A JSON locale file — flat or nested, 5.0 MB max.",
+      "color": "lab(43.332 -0.235021 -4.87669)",
+      "bg": "rgb(0, 0, 1)",
+      "fontSize": "13px",
+      "weight": "400",
+      "ratio": 1.11,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.max-w-[40ch].text-[13px].leading-relaxed"
+    },
+    {
+      "text": "⌘",
+      "color": "lab(70.0279 -0.216544 -3.77047)",
+      "bg": "rgb(12, 0, 4)",
+      "fontSize": "11px",
+      "weight": "400",
+      "ratio": 1.24,
+      "required": 4.5,
+      "pass": false,
+      "sel": "kbd.mx-0.5.inline-flex.h-5"
+    },
+    {
+      "text": "No ANTHROPIC_API_KEY was found, so LingoLoop is ",
+      "color": "lab(70.0279 -0.216544 -3.77047)",
+      "bg": "rgb(3, 0, 7)",
+      "fontSize": "13px",
+      "weight": "400",
+      "ratio": 1.25,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.text-[13px].leading-relaxed.text-[var(--text-secondary)]"
+    },
+    {
+      "text": "Drop in your source catalog. LingoLoop reads the",
+      "color": "lab(70.0279 -0.216544 -3.77047)",
+      "bg": "rgb(3, 0, 2)",
+      "fontSize": "15px",
+      "weight": "400",
+      "ratio": 1.26,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.mt-3.5.text-[15px].leading-relaxed"
+    },
+    {
+      "text": "01",
+      "color": "lab(96.2753 -0.0742376 -1.13652)",
+      "bg": "rgb(2, 0, 34)",
+      "fontSize": "10.5px",
+      "weight": "400",
+      "ratio": 1.46,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.tabular.font-[family-name:var(--font-mono)].text-[10.5px]"
+    },
+    {
+      "text": "This run will be simulated, not translated",
+      "color": "lab(80.065 15.9833 65.748)",
+      "bg": "rgb(3, 0, 7)",
+      "fontSize": "13px",
+      "weight": "500",
+      "ratio": 1.48,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.text-[13px].font-medium.text-[var(--color-warn-400)]"
+    },
+    {
+      "text": "Browse files",
+      "color": "lab(96.2753 -0.0742376 -1.13652)",
+      "bg": "rgb(12, 0, 4)",
+      "fontSize": "13px",
+      "weight": "500",
+      "ratio": 1.48,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.inline-flex.h-8.select-none"
+    },
+    {
+      "text": "Offline simulation — no API key",
+      "color": "lab(80.065 15.9833 65.748)",
+      "bg": "rgb(0, 0, 11)",
+      "fontSize": "12px",
+      "weight": "500",
+      "ratio": 1.49,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.font-[family-name:var(--font-mono)].tracking-tight"
+    },
+    {
+      "text": "Parse and analyse",
+      "color": "lab(96.2753 -0.0742376 -1.13652)",
+      "bg": "rgb(5, 0, 3)",
+      "fontSize": "13px",
+      "weight": "500",
+      "ratio": 1.49,
+      "required": 4.5,
+      "pass": false,
+      "sel": "h3.mt-1.5.text-[13px].font-medium"
+    },
+    {
+      "text": "LingoLoop",
+      "color": "lab(96.2753 -0.0742376 -1.13652)",
+      "bg": "rgb(0, 0, 1)",
+      "fontSize": "14px",
+      "weight": "600",
+      "ratio": 1.5,
+      "required": 4.5,
+      "pass": false,
+      "sel": "span.text-[14px].font-semibold.tracking-[-0.01em]"
+    },
+    {
+      "text": "Drop your source catalog",
+      "color": "lab(96.2753 -0.0742376 -1.13652)",
+      "bg": "rgb(0, 0, 1)",
+      "fontSize": "15px",
+      "weight": "500",
+      "ratio": 1.5,
+      "required": 4.5,
+      "pass": false,
+      "sel": "p.text-[15px].font-medium.text-[var(--text-primary)]"
+    }
+  ],
+  "tabs": [
+    {
+      "tag": "div",
+      "text": "Drop your source catalogA JSON locale file — ",
+      "cls": "group relative flex min-h-[260px] cursor-pointer flex-col items-center justify-center gap-4 rounded-[var(--rad",
+      "outline": "solid 2px lab(57.4796 20.6553 -65.0468) off:2px",
+      "boxShadow": "none",
+      "ring": "",
+      "rect": {
+        "x": 194,
+        "y": 549,
+        "w": 1052,
+        "h": 302
+      },
+      "role": "button",
+      "ariaLabel": "Upload a JSON locale catalog. Press Enter to browse, or paste JSON.",
+      "type": null
+    }
+  ],
+  "geom": [
+    {
+      "sel": "div.relative",
+      "left": 0,
+      "right": 1440,
+      "top": 57,
+      "w": 1440,
+      "h": 1056,
+      "pad": "0px",
+      "radius": "0px",
+      "border": "0px oklch(0.302999 0.0119926 none / 0.55)",
+      "bg": "rgba(0, 0, 0, 0)"
+    },
+    {
+      "sel": "section.mb-9.max-w-[62ch]",
+      "left": 194,
+      "right": 746,
+      "top": 105,
+      "w": 552,
+      "h": 252,
+      "pad": "0px",
+      "radius": "0px",
+      "border": "0px oklch(0.302999 0.0119926 none / 0.55)",
+      "bg": "rgba(0, 0, 0, 0)"
+    },
+    {
+      "sel": "div.flex.items-start.gap-3.rounded-[var(--radius-lg)]",
+      "left": 194,
+      "right": 1246,
+      "top": 437,
+      "w": 1052,
+      "h": 92,
+      "pad": "12px 16px",
+      "radius": "12px",
+      "border": "1px oklch(0.752005 0.155002 66.005 / 0.28)",
+      "bg": "oklch(0.752005 0.155002 66.005 / 0.09)"
+    },
+    {
+      "sel": "div.group.relative.flex.min-h-[260px]",
+      "left": 194,
+      "right": 1246,
+      "top": 549,
+      "w": 1052,
+      "h": 302,
+      "pad": "48px 24px",
+      "radius": "16px",
+      "border": "1px oklch(0.397999 0.0129904 none / 0.7)",
+      "bg": "oklch(0.177999 0.00899557 none / 0.6)"
+    },
+    {
+      "sel": "div.grid.gap-px.overflow-hidden.rounded-[var(--radius-xl)]",
+      "left": 194,
+      "right": 1246,
+      "top": 871,
+      "w": 1052,
+      "h": 146,
+      "pad": "0px",
+      "radius": "16px",
+      "border": "1px oklch(0.302999 0.0119926 none / 0.55)",
+      "bg": "oklch(0.302999 0.0119926 none / 0.55)"
+    }
+  ],
+  "meta": {
+    "bodyBg": "lab(2.73365 -0.0348985 -1.60412)",
+    "htmlOverflowX": false,
+    "scrollW": 1440,
+    "clientW": 1440,
+    "fonts": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", \"Noto Sans\", Arial, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+    "reducedMotionRules": 1
+  },
+  "mobile": {
+    "dashboard": {
+      "scrollW": 390,
+      "clientW": 390,
+      "overflowX": false,
+      "offenders": [],
+      "smallTargets": [
+        {
+          "sel": "input.sr-only",
+          "w": 1,
+          "h": 1,
+          "text": ""
+        }
+      ]
+    },
+    "review": {
+      "scrollW": 390,
+      "clientW": 390,
+      "overflowX": false,
+      "offenders": [
+        {
+          "sel": "div.group/grid.relative.min-w-[880px]",
+          "left": 25,
+          "right": 905
+        },
+        {
+          "sel": "div.sticky.top-0.z-20",
+          "left": 25,
+          "right": 905
+        },
+        {
+          "sel": "span.",
+          "left": 303,
+          "right": 453
+        },
+        {
+          "sel": "span.",
+          "left": 465,
+          "right": 655
+        },
+        {
+          "sel": "span.",
+          "left": 667,
+          "right": 835
+        },
+        {
+          "sel": "span.",
+          "left": 847,
+          "right": 965
+        },
+        {
+          "sel": "div.",
+          "left": 25,
+          "right": 905
+        },
+        {
+          "sel": "div.border-b.border-[var(--border-subtle)]",
+          "left": 25,
+          "right": 905
+        },
+        {
+          "sel": "div.group.grid.cursor-default",
+          "left": 25,
+          "right": 905
+        },
+        {
+          "sel": "span.truncate.text-[var(--text-secondary)]",
+          "left": 303,
+          "right": 453
+        },
+        {
+          "sel": "div.flex.min-w-0.items-center",
+          "left": 465,
+          "right": 655
+        },
+        {
+          "sel": "span.min-w-0.flex-1.truncate",
+          "left": 465,
+          "right": 629
+        }
+      ],
+      "smallTargets": [
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 108,
+          "h": 28,
+          "text": "All locales708"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 119,
+          "h": 28,
+          "text": "deDeutsch118"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 120,
+          "h": 28,
+          "text": "frFrançais118"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 188,
+          "h": 28,
+          "text": "pt-BRPortuguês (Brasil)118"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 108,
+          "h": 28,
+          "text": "ja日本語118"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 108,
+          "h": 28,
+          "text": "arالعربية118"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 120,
+          "h": 28,
+          "text": "ruРусский118"
+        },
+        {
+          "sel": "button.relative.inline-flex",
+          "w": 120,
+          "h": 32,
+          "text": "Export locale"
+        },
+        {
+          "sel": "button.relative.inline-flex",
+          "w": 160,
+          "h": 32,
+          "text": "Export all · 6 locales"
+        },
+        {
+          "sel": "input.h-8.w-[264px]",
+          "w": 264,
+          "h": 32,
+          "text": ""
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 74,
+          "h": 28,
+          "text": "Any status"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 94,
+          "h": 28,
+          "text": "Passed620"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 92,
+          "h": 28,
+          "text": "Flagged73"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 81,
+          "h": 28,
+          "text": "Failed15"
+        },
+        {
+          "sel": "select.h-8.rounded-[var(--radius-sm)]",
+          "w": 190,
+          "h": 32,
+          "text": "Any issuelength-tight (68)budg"
+        },
+        {
+          "sel": "button.inline-flex.h-7",
+          "w": 112,
+          "h": 28,
+          "text": "Edited by me0"
+        },
+        {
+          "sel": "button.grid.h-5",
+          "w": 20,
+          "h": 20,
+          "text": ""
+        },
+        {
+          "sel": "button.grid.h-5",
+          "w": 20,
+          "h": 20,
+          "text": ""
+        },
+        {
+          "sel": "button.grid.h-5",
+          "w": 20,
+          "h": 20,
+          "text": ""
+        },
+        {
+          "sel": "button.grid.h-5",
+          "w": 20,
+          "h": 20,
+          "text": ""
+        }
+      ]
+    }
+  },
+  "log": {
+    "console": [],
+    "failed": []
+  }
+}

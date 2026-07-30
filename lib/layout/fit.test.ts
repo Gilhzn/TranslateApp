@@ -224,6 +224,78 @@ describe("evaluateFit — invariants (property)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Regression: the full-width unit error, seen from the fit engine.
+// ---------------------------------------------------------------------------
+
+describe("evaluateFit — CJK is measured in the same unit as the source", () => {
+  /**
+   * The fit engine's whole job is comparing a Latin source width to a target
+   * width across a script boundary, so a unit error in the full-width advance
+   * lands squarely on its main path. Measuring CJK glyphs at 1.9em instead of
+   * one em box made every one of these standard, correct translations
+   * "overflow", and `enforceFit` then clipped them into "ダウ…", "無…", "免…".
+   */
+  it("accepts the standard translation of ordinary UI strings", () => {
+    const cases: Array<[string, string, string, UiRole]> = [
+      ["ja", "Download", "ダウンロード", "button"],
+      ["ja", "Free", "無料", "badge"],
+      ["ja", "New", "新着", "badge"],
+      ["ja", "Settings", "設定", "menu"],
+      ["ja", "Save changes", "変更を保存", "button"],
+      ["zh-CN", "Free", "免费", "badge"],
+      ["zh-CN", "Download", "下载", "button"],
+      ["zh-TW", "Free", "免費", "badge"],
+      ["ko", "Save changes", "변경사항 저장", "button"],
+      ["ko", "Settings", "설정", "menu"],
+    ];
+    for (const [locale, source, target, role] of cases) {
+      const profile = getLocaleProfile(locale);
+      const fit = evaluateFit(source, target, role, profile);
+      expect(
+        fit.verdict,
+        `${locale} ${role} "${source}" -> "${target}" (${fit.targetWidth}em vs ${fit.allowedWidth}em)`,
+      ).toBe("fits");
+      expect(fit.overBy).toBe(0);
+    }
+  });
+
+  it("still flags CJK that is genuinely too long for the chrome", () => {
+    // The fix must not cost anything in detection: a button label that really
+    // is a sentence is still 3.6x its allowance.
+    const overlong = evaluateFit(
+      "Save",
+      "すべての変更内容を永続的に保存する",
+      "button",
+      ja,
+    );
+    expect(overlong.verdict).toBe("overflow");
+    expect(overlong.overBy).toBeGreaterThan(5);
+    expect(evaluateFit("Free", "完全無料キャンペーン中", "badge", ja).verdict).toBe(
+      "overflow",
+    );
+    expect(
+      evaluateFit("OK", "取消并返回上一个页面", "button", zh).verdict,
+    ).toBe("overflow");
+  });
+
+  it("leaves an accepted CJK translation untouched by enforceFit", () => {
+    // The clipping path is only reachable through a verdict, so a false
+    // overflow is what produced mutilated output. Nothing may be clipped here.
+    for (const [locale, source, target, role] of [
+      ["ja", "Download", "ダウンロード", "button"],
+      ["ja", "Free", "無料", "badge"],
+      ["zh-CN", "Free", "免费", "badge"],
+      ["ko", "Save changes", "변경사항 저장", "button"],
+    ] as const) {
+      const profile = getLocaleProfile(locale);
+      const clipped = enforceFit(source, target, role, profile);
+      expect(clipped.truncated, `${locale} "${target}"`).toBe(false);
+      expect(clipped.text).toBe(target);
+    }
+  });
+});
+
 describe("evaluateFit — multi-line body copy", () => {
   it("compares the widest line, not the total advance", () => {
     const source = "The quick brown fox jumps over the lazy dog every day.";

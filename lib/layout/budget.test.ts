@@ -359,6 +359,53 @@ describe("budgetForRole — coherence with evaluateFit (property)", () => {
   });
 });
 
+describe("budgetForRole — CJK limits stay satisfiable", () => {
+  /**
+   * With full-width glyphs measured at 1.9em inside an em-valued table, the
+   * width ceiling collapsed and `describeBudgetForPrompt` issued instructions
+   * like "Maximum 1 characters" for zh-CN badges and ja buttons. No Chinese or
+   * Japanese string of any meaning is one character, so the model could only
+   * fail, and the repair loop then burned its attempts on an impossible ask.
+   */
+  const CASES: Array<[string, UiRole, string]> = [
+    ["zh-CN", "badge", "Free"],
+    ["ja", "badge", "New"],
+    ["zh-CN", "badge", "Beta"],
+    ["ja", "button", "Download"],
+    ["ko", "menu", "Settings"],
+    ["zh-TW", "button", "OK"],
+  ];
+
+  it("never advertises a limit below two characters", () => {
+    for (const [code, role, source] of CASES) {
+      const profile = getLocaleProfile(code);
+      const budget = budgetForRole(role, source, profile);
+      expect(
+        budget.maxChars ?? 0,
+        `${code}/${role} "${source}": ${budget.rationale}`,
+      ).toBeGreaterThanOrEqual(2);
+      const copy = describeBudgetForPrompt(budget, profile, source, role);
+      const stated = Number(/^Maximum (\d+) characters/.exec(copy)?.[1] ?? "0");
+      expect(stated, copy).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("keeps the limit within one glyph of what the width admits", () => {
+    for (const [code, role, source] of CASES) {
+      const profile = getLocaleProfile(code);
+      const limit = budgetForRole(role, source, profile).maxChars ?? 0;
+      const allowed = allowedWidthFor(source, role, profile);
+      const letter = typicalCharOf(profile);
+      expect(estimateWidth(letter.repeat(limit), profile)).toBeLessThanOrEqual(
+        allowed,
+      );
+      expect(estimateWidth(letter.repeat(limit + 1), profile)).toBeGreaterThan(
+        allowed,
+      );
+    }
+  });
+});
+
 describe("budgetForRole — invariants (property)", () => {
   it("always produces a usable budget for any role, locale and source", () => {
     const random = makeRandom(0xbadc0de);

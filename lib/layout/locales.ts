@@ -27,6 +27,12 @@
  * count alone is the single most common way to ship a broken Japanese button:
  * 0.60 * 2.0 = 1.20, i.e. Japanese is usually *wider* than English, not
  * narrower. `metrics.ts` measures per code point so this falls out naturally.
+ *
+ * `glyphWidth` is a *ratio*, not an em value: it counts average Latin
+ * characters, so ja 1.95 means "1.95 x 0.55em = 1.0725em", one em box.
+ * `metrics.ts` multiplies by `MEAN_LATIN_ADVANCE` before it touches the
+ * advance table; feeding it in raw measures CJK ~1.9x too wide and produces
+ * budgets no Japanese or Chinese string can satisfy.
  */
 
 import type { LocaleCode, LocaleProfile } from "@/lib/types";

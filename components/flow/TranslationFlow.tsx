@@ -347,7 +347,9 @@ function StepRail({ phase, className }: { phase: FlowState["phase"]; className?:
                 !active && !done && "border-[var(--border-subtle)] text-[var(--text-tertiary)]",
               )}
             >
-              <span className="tabular font-[family-name:var(--font-mono)] text-[10.5px] opacity-70">
+              {/* The mono face and 10.5px size already subordinate the step
+                number; a heavier dim would push tertiary text under 4.5:1. */}
+            <span className="tabular font-[family-name:var(--font-mono)] text-[10.5px] opacity-90">
                 {String(index + 1).padStart(2, "0")}
               </span>
               {step.label}

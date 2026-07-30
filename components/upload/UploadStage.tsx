@@ -80,6 +80,12 @@ export function UploadStage({
   const [inspecting, setInspecting] = React.useState(false);
 
   const inspectorRef = React.useRef<HTMLDivElement>(null);
+  const summaryRef = React.useRef<HTMLDivElement>(null);
+  const summaryHeadingRef = React.useRef<HTMLHeadingElement>(null);
+  // Bumped once per successful parse. The scroll cannot happen inside the
+  // parse handler — the summary panel does not exist until React has committed
+  // the new state — so a counter carries the intent into an effect.
+  const [landings, setLandings] = React.useState(0);
 
   const onParseStart = React.useCallback(() => {
     setParsing(true);
@@ -98,6 +104,7 @@ export function UploadStage({
     setParsing(false);
     setAttempted(false);
     setInspecting(false);
+    setLandings((count) => count + 1);
     notifyRef.current?.(next);
     // A new file may be a different source language; keep the developer's tone,
     // context, glossary and guardrails, but re-anchor the source locale and drop
@@ -108,6 +115,23 @@ export function UploadStage({
       targetLocales: current.targetLocales.filter((code) => code !== next.sourceLocale),
     }));
   }, []);
+
+  /**
+   * A parse adds ~2,000px of analysis below the drop zone, and the developer
+   * is reading the drop zone. Land them on the top of "What we understood" —
+   * the thing the app just computed — rather than leaving the viewport where
+   * it was or, worse, letting some descendant pick the offset for us. Focus
+   * follows the scroll so keyboard and screen-reader users arrive with it, and
+   * `preventScroll` keeps that focus call from fighting the smooth animation.
+   */
+  React.useEffect(() => {
+    if (landings === 0) return;
+    const panel = summaryRef.current;
+    if (panel === null) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    panel.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    summaryHeadingRef.current?.focus({ preventScroll: true });
+  }, [landings]);
 
   const onFailure = React.useCallback((next: UploadFailure) => {
     setFailure(next);
@@ -182,7 +206,15 @@ export function UploadStage({
         <IdleGuide parsing={parsing} />
       ) : (
         <>
-          <CatalogSummary catalog={catalog} />
+          {/*
+            The scroll target is this wrapper, not the card: the card plays
+            `animate-in-rise`, and measuring a mid-animation transform would
+            land the developer 8px off. The wrapper's box is the settled one.
+            `scroll-mt` clears the 57px sticky header with air to spare.
+          */}
+          <div ref={summaryRef} className="scroll-mt-[4.5rem]">
+            <CatalogSummary headingRef={summaryHeadingRef} catalog={catalog} />
+          </div>
 
           <LocalePicker
             sourceLocale={draft.sourceLocale}

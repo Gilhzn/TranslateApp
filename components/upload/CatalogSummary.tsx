@@ -29,6 +29,13 @@ import {
 export interface CatalogSummaryProps {
   catalog: ParsedCatalog;
   className?: string;
+  /**
+   * The flow lands the developer on this panel after a parse: it scrolls the
+   * section into view and moves focus to the heading, so keyboard and
+   * screen-reader users arrive at the analysis too rather than being left
+   * wherever the previous view happened to be.
+   */
+  headingRef?: React.Ref<HTMLHeadingElement>;
 }
 
 const ROLE_SWATCHES: readonly string[] = [
@@ -50,7 +57,7 @@ function swatch(index: number): string {
   return ROLE_SWATCHES[index % ROLE_SWATCHES.length] ?? "var(--color-ink-500)";
 }
 
-export function CatalogSummary({ catalog, className }: CatalogSummaryProps) {
+export function CatalogSummary({ catalog, className, headingRef }: CatalogSummaryProps) {
   const headlines = React.useMemo(() => catalogHeadlines(catalog), [catalog]);
   const roles = React.useMemo(() => tallyRoles(catalog.entries), [catalog]);
   const groups = React.useMemo(() => groupAmbiguities(catalog.entries), [catalog]);
@@ -63,7 +70,15 @@ export function CatalogSummary({ catalog, className }: CatalogSummaryProps) {
       aria-label="Parsed catalog summary"
     >
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--border-subtle)] px-5 py-4">
-        <h2 className="text-[13px] font-medium tracking-tight text-[var(--text-primary)]">
+        <h2
+          ref={headingRef}
+          tabIndex={-1}
+          className={cn(
+            "text-[13px] font-medium tracking-tight text-[var(--text-primary)]",
+            "rounded-[var(--radius-xs)] outline-none",
+            "focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--color-accent-500)]",
+          )}
+        >
           What we understood
         </h2>
         <Badge tone="neutral" mono>

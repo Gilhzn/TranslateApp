@@ -73,7 +73,10 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           "relative inline-flex select-none items-center justify-center font-medium",
           "transition-[background-color,border-color,color,transform,filter] duration-150",
           "active:translate-y-px",
-          "disabled:pointer-events-none disabled:opacity-45",
+          // 0.6, not 0.45: a blanket opacity dims the label as well as the
+          // chrome, and at 0.45 a disabled secondary button's text landed at
+          // ~4.0:1 — legibly worse than the "unavailable" signal needs to be.
+          "disabled:pointer-events-none disabled:opacity-60",
           VARIANTS[variant],
           SIZES[size],
           className,

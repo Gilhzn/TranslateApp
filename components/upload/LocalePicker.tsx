@@ -51,10 +51,30 @@ export function LocalePicker({
   const activeProfile = clampedActive >= 0 ? visible[clampedActive] : undefined;
   const activeId = activeProfile ? optionId(activeProfile.code) : undefined;
 
+  // Keyboard navigation must keep the active option inside the list's own
+  // scrollport — and nothing more. `scrollIntoView` walks *every* scrollable
+  // ancestor including the document, and `activeIndex` starts at 0, so the old
+  // version fired on mount with no user gesture and dragged the whole page down
+  // to the picker the instant a catalog parsed. Assigning `scrollTop` directly
+  // cannot move an ancestor, and the mount guard means an appearing picker
+  // never scrolls anything at all.
+  const didMount = React.useRef(false);
   React.useEffect(() => {
-    if (activeId === undefined || listRef.current === null) return;
+    if (!didMount.current) {
+      didMount.current = true;
+      return;
+    }
+    const list = listRef.current;
+    if (activeId === undefined || list === null) return;
     const node = document.getElementById(activeId);
-    if (node !== null) node.scrollIntoView({ block: "nearest" });
+    if (node === null) return;
+    const top = node.offsetTop - list.offsetTop;
+    const bottom = top + node.offsetHeight;
+    if (top < list.scrollTop) {
+      list.scrollTop = top;
+    } else if (bottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = bottom - list.clientHeight;
+    }
   }, [activeId]);
 
   const toggle = React.useCallback(

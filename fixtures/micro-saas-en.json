@@ -1,0 +1,86 @@
+{
+  "app": {
+    "name": "Shipyard",
+    "tagline": "Deploy previews for every branch."
+  },
+  "nav": {
+    "overview": "Overview",
+    "deployments": "Deployments",
+    "branches": "Branches",
+    "logs": "Logs",
+    "settings": "Settings",
+    "billing": "Billing"
+  },
+  "buttons": {
+    "deploy": "Deploy",
+    "redeploy": "Redeploy",
+    "rollback": "Rollback",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saveChanges": "Save Changes",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "ok": "OK",
+    "run": "Run",
+    "runBuild": "Run Build",
+    "retry": "Retry",
+    "upgrade": "Upgrade Plan"
+  },
+  "status": {
+    "queued": "Queued",
+    "building": "Building",
+    "ready": "Ready",
+    "error": "Error",
+    "canceled": "Canceled",
+    "saving": "Saving",
+    "saved": "Saved"
+  },
+  "deployment": {
+    "_context": "Shown on the deployment detail page header.",
+    "commitBy": "{author} committed {sha} to {branch}",
+    "durationLabel": "Built in {seconds}s",
+    "envLabel": "Environment",
+    "previewUrl": "Preview URL",
+    "sourceBranch": "Source Branch",
+    "triggeredBy": "Triggered by {trigger}"
+  },
+  "billing": {
+    "currentPlan": "Current Plan",
+    "seats": "{count, plural, one {# seat} other {# seats}}",
+    "usageThisMonth": "Usage this month",
+    "buildMinutes": "Build minutes",
+    "min": "min",
+    "overageWarning": "You've used %d%% of your included build minutes.",
+    "invoiceReady": "Your invoice for {month} is ready."
+  },
+  "empty": {
+    "noDeployments": "No deployments yet",
+    "noDeploymentsBody": "Push to any branch and Shipyard will build a preview automatically. Connect a repository to get started.",
+    "noLogs": "No logs for this build."
+  },
+  "errors": {
+    "buildFailed": "Build failed at step \"{step}\".",
+    "rateLimited": "Rate limit reached. Try again in {minutes} minutes.",
+    "unauthorized": "You don't have access to this project.",
+    "webhookMissing": "We couldn't find a webhook for {{repo}}. Reconnect the repository.",
+    "invalidToken": "That API token is invalid or has expired."
+  },
+  "toasts": {
+    "deployStarted": "Deployment started",
+    "copiedUrl": "Copied to clipboard",
+    "settingsSaved": "Settings saved"
+  },
+  "onboarding": {
+    "step1Title": "Connect your repository",
+    "step1Body": "Shipyard needs read access to your repository to fetch source and write deployment statuses.",
+    "step2Title": "Pick a framework preset",
+    "step2Body": "We detected a Next.js project. You can override the build command and output directory at any time.",
+    "skip": "Skip for now",
+    "docsLink": "https://docs.shipyard.dev/getting-started"
+  },
+  "limits": {
+    "maxProjects": 25,
+    "retentionDays": 30,
+    "customDomains": true
+  }
+}

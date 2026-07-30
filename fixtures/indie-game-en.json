@@ -1,0 +1,124 @@
+{
+  "meta": {
+    "_comment": "Emberfall — a roguelike deckbuilder. Casual, punchy, community voice.",
+    "gameTitle": "Emberfall",
+    "version": "1.4.2",
+    "buildDate": "2026-03-11"
+  },
+  "menu": {
+    "play": "Play",
+    "continue": "Continue Run",
+    "newRun": "New Run",
+    "dailyChallenge": "Daily Challenge",
+    "collection": "Collection",
+    "settings": "Settings",
+    "credits": "Credits",
+    "quit": "Quit to Desktop"
+  },
+  "hud": {
+    "hp": "HP",
+    "mp": "MP",
+    "xp": "XP",
+    "floor": "Floor {n}",
+    "gold": "{amount} Gold",
+    "deckCount": "{count} cards left",
+    "comboMeter": "Combo x{multiplier}",
+    "run": "Run",
+    "save": "Save",
+    "saving": "Saving…",
+    "autosaveOn": "Autosave on"
+  },
+  "actions": {
+    "endTurn": "End Turn",
+    "discard": "Discard",
+    "draw": "Draw",
+    "fleeBattle": "Flee",
+    "useItem": "Use",
+    "equip": "Equip",
+    "sell": "Sell",
+    "upgrade": "Upgrade"
+  },
+  "cards": [
+    {
+      "id": "strike",
+      "name": "Strike",
+      "rarity": "Common",
+      "description": "Deal {damage} damage to a single enemy.",
+      "flavor": "Simple. Reliable. Boring."
+    },
+    {
+      "id": "emberburst",
+      "name": "Emberburst",
+      "rarity": "Rare",
+      "description": "Deal {damage} damage to all enemies and apply <b>Burn</b> for {turns} turns.",
+      "flavor": "The floor remembers what you did last winter."
+    },
+    {
+      "id": "second_wind",
+      "name": "Second Wind",
+      "rarity": "Epic",
+      "description": "Heal {amount} HP. If your deck is empty, draw {count} cards instead.",
+      "flavor": "Not dead yet, huh?"
+    }
+  ],
+  "shop": {
+    "title": "The Ashen Market",
+    "buy": "Buy",
+    "cantAfford": "Not enough gold — you need {short} more.",
+    "soldOut": "Sold Out",
+    "rerollCost": "Reroll ({cost}g)"
+  },
+  "results": {
+    "victory": "Run Complete!",
+    "defeat": "You Died",
+    "gg": "GG — floor {floor} in {time}",
+    "newRecord": "New personal best!",
+    "shareRun": "Share Run",
+    "backToMenu": "Back to Menu"
+  },
+  "settings": {
+    "graphics": {
+      "label": "Graphics",
+      "quality": "Quality",
+      "fullscreen": "Fullscreen",
+      "vsync": "V-Sync",
+      "fpsLimit": "FPS Limit"
+    },
+    "audio": {
+      "label": "Audio",
+      "master": "Master",
+      "music": "Music",
+      "sfx": "SFX",
+      "mute": "Mute"
+    },
+    "accessibility": {
+      "label": "Accessibility",
+      "colorblindMode": "Colorblind Mode",
+      "reduceFlashing": "Reduce Flashing",
+      "holdToConfirm": "Hold to Confirm",
+      "textSize": "Text Size"
+    }
+  },
+  "social": {
+    "joinDiscord": "Join our Discord",
+    "wishlistSteam": "Wishlist on Steam",
+    "followItch": "Follow on itch.io",
+    "supportKofi": "Support on Ko-fi"
+  },
+  "errors": {
+    "saveCorrupted": "Your save file couldn't be read. A backup from {time} is available.",
+    "cloudSyncFailed": "Cloud sync failed. Your run is saved locally.",
+    "connectionLost": "Connection lost. Reconnecting…",
+    "modIncompatible": "The mod \"{name}\" isn't compatible with version {version}."
+  },
+  "tooltips": {
+    "burn": "Burn deals damage at the end of each turn and does not stack with itself.",
+    "crit": "Critical hits deal 200% damage and ignore Block.",
+    "run": "Leave the battle immediately. You keep your gold but lose any unclaimed loot."
+  },
+  "flags": {
+    "hasSeenTutorial": false,
+    "maxFloorReached": 12,
+    "difficultyTier": null
+  }
+}

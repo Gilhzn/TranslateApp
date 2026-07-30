@@ -132,6 +132,25 @@ export function detectIndent(raw: string): string {
   return "";
 }
 
+/**
+ * Detect the file's line-ending style.
+ *
+ * A CRLF working copy (the default on Windows with `core.autocrlf`) must come
+ * back CRLF, or every single line of the file shows up as changed in the
+ * developer's diff. Mixed files are re-emitted in whichever style dominates,
+ * which is the same rule editors use; a file with no newline at all is "\n".
+ */
+export function detectEol(raw: string): "\n" | "\r\n" {
+  let crlf = 0;
+  let loneLf = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== "\n") continue;
+    if (i > 0 && raw[i - 1] === "\r") crlf += 1;
+    else loneLf += 1;
+  }
+  return crlf > loneLf ? "\r\n" : "\n";
+}
+
 const LOCALE_RE = /^([a-z]{2,3})(?:[-_]([A-Za-z]{2,4}))?$/;
 
 /** Normalise `pt_br` / `PT-br` to the conventional `pt-BR`. */
@@ -194,6 +213,11 @@ export interface ParseOptions {
 export interface ParsedCatalog extends SourceCatalog {
   /** Encoded node path -> that object's keys in source order. */
   keyOrder: KeyOrderMap;
+  /**
+   * Source line-ending style. Like `keyOrder`, a contract extension rather than
+   * a `SourceCatalog` field, because `SourceCatalog` is frozen.
+   */
+  readonly eol: "\n" | "\r\n";
 }
 
 /**
@@ -277,6 +301,7 @@ export function parseSourceFile(
     tree,
     keyOrder: document.keyOrder,
     indent: detectIndent(text),
+    eol: detectEol(text),
     trailingNewline: rawText.endsWith("\n"),
     stats: {
       totalKeys: totalLeaves,
@@ -297,6 +322,12 @@ export type CatalogFormatting = Pick<
 > & {
   /** Source key order; a {@link ParsedCatalog} supplies this automatically. */
   readonly keyOrder?: KeyOrderMap;
+  /**
+   * Source line-ending style; a {@link ParsedCatalog} supplies this
+   * automatically. Defaults to "\n" when a caller builds the formatting by
+   * hand.
+   */
+  readonly eol?: "\n" | "\r\n";
 };
 
 /**
@@ -315,17 +346,18 @@ export function serializeWithCatalogFormatting(
   tree: JsonValue,
 ): string {
   const indent = catalog.indent;
+  const eol = catalog.eol ?? "\n";
   const pretty = indent.length > 0;
   const out: string[] = [];
   const path: Array<string | number> = [];
   // Indentation prefixes are reused constantly; build each depth once.
-  const prefixes: string[] = ["\n"];
+  const prefixes: string[] = [eol];
   const prefixFor = (depth: number): string => {
     for (let d = prefixes.length; d <= depth; d++) {
-      prefixes.push(`\n${indent.repeat(d)}`);
+      prefixes.push(`${eol}${indent.repeat(d)}`);
     }
     // Depths are filled in above, so this index is populated.
-    return prefixes[depth] ?? "\n";
+    return prefixes[depth] ?? eol;
   };
 
   const write = (node: JsonValue, depth: number): void => {
@@ -386,6 +418,6 @@ export function serializeWithCatalogFormatting(
   };
 
   write(tree, 0);
-  if (catalog.trailingNewline) out.push("\n");
+  if (catalog.trailingNewline) out.push(eol);
   return out.join("");
 }

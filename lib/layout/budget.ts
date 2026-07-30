@@ -527,25 +527,29 @@ export function describeBudgetForPrompt(
   role?: UiRole,
 ): string {
   const sourceChars = measureText(source, profile).charCount;
-  const spec = role === undefined ? undefined : ROLE_SPECS[role];
 
+  // No role supplied means "chrome not known", which is exactly what the
+  // `unknown` role is specified to model — so default the role rather than
+  // branching on it. The alternative, scaling a character *count* by
+  // `budget.maxRatio`, multiplies characters by a width ratio: for a full-width
+  // locale it advertises well over twice the characters `allowedWidth` can
+  // hold, and even Latin targets come out ~30% long. Every number below now
+  // comes from `allowedWidth / typicalCharWidth`, so the limit can be
+  // conservative but never optimistic.
+  const effectiveRole: UiRole = role ?? "unknown";
   const limit =
     budget.maxChars ??
-    (role === undefined
-      ? // No role and no hard cap: fall back to the ratio, which is all the
-        // budget carries. Round up so the instruction is never below source.
-        Math.max(sourceChars + 1, Math.ceil(sourceChars * budget.maxRatio))
-      : characterCeiling(
-          source,
-          role,
-          profile,
-          allowedWidthFor(source, role, profile),
-        ));
+    characterCeiling(
+      source,
+      effectiveRole,
+      profile,
+      allowedWidthFor(source, effectiveRole, profile),
+    );
 
   const chrome =
-    spec === undefined
+    role === undefined
       ? "longer text may be clipped or may reflow the surrounding layout"
-      : lowerFirst(spec.chrome);
+      : lowerFirst(ROLE_SPECS[role].chrome);
 
   const parts: string[] = [
     `Maximum ${limit} characters — ${chrome}.`,

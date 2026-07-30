@@ -9,6 +9,7 @@ export {
   parseSourceFile,
   serializeWithCatalogFormatting,
   detectIndent,
+  detectEol,
   inferLocaleFromFileName,
   JsonParseError,
   type ParseOptions,

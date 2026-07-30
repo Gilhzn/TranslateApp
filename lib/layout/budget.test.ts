@@ -181,16 +181,16 @@ describe("budgetForRole — absolute headroom for very short sources", () => {
 
   it("does not hand CJK Latin-style character headroom", () => {
     // "OK" as a Japanese button: allowedWidth is 4.525em and a Japanese glyph
-    // is 1.95em, so exactly two characters fit. 3 was the answer before the
-    // budget/fit coherence fix, and it was wrong by measurement — 3 glyphs are
-    // 5.85em, 29% past the allowance — not merely aggressive. Anything above 2
-    // instructs the model to overflow and then rejects it for obeying.
+    // is one em box (1.95 mean-Latin characters x 0.55em = 1.0725em), so
+    // exactly four characters fit. The limit is derived from measurement, not
+    // from Latin-style character headroom: anything above what the width
+    // admits instructs the model to overflow and then rejects it for obeying.
     const budget = budgetForRole("button", "OK", ja);
-    expect(budget.maxChars).toBe(2);
-    expect(estimateWidth("定".repeat(2), ja)).toBeLessThanOrEqual(
+    expect(budget.maxChars).toBe(4);
+    expect(estimateWidth("定".repeat(4), ja)).toBeLessThanOrEqual(
       allowedWidthFor("OK", "button", ja),
     );
-    expect(estimateWidth("定".repeat(3), ja)).toBeGreaterThan(
+    expect(estimateWidth("定".repeat(5), ja)).toBeGreaterThan(
       allowedWidthFor("OK", "button", ja),
     );
   });
@@ -314,13 +314,17 @@ describe("budgetForRole — coherence with evaluateFit (property)", () => {
   it("is conservative for full-width scripts specifically", () => {
     // The regression that motivated all of the above: maxChars was derived
     // from a 50/50 blend of the CJK em square and the *English* source's mean
-    // advance, overstating the real limit by 1.33x-3.00x for every ja/ko/zh
-    // combination. Pin the corrected numbers so the blend cannot creep back.
+    // advance, overstating the real limit for every ja/ko/zh combination.
+    // Pin the corrected numbers so the blend cannot creep back.
+    //
+    // These are the counts the *em box* admits — a full-width glyph is one em
+    // (ja 1.073em), not 1.95em. The inflated advance produced 1 and 2 here,
+    // limits no Japanese or Chinese string of any meaning can satisfy.
     const cases: Array<[string, UiRole, string, number]> = [
-      ["ja", "button", "Save", 2],
-      ["ja", "badge", "Save", 1],
-      ["ko", "badge", "Settings", 2],
-      ["zh-CN", "button", "OK", 2],
+      ["ja", "button", "Save", 4],
+      ["ja", "badge", "Save", 3],
+      ["ko", "badge", "Settings", 4],
+      ["zh-CN", "button", "OK", 4],
     ];
     for (const [code, role, source, expected] of cases) {
       const profile = LOCALE_PROFILES[code];
@@ -375,18 +379,23 @@ describe("budgetForRole — invariants (property)", () => {
       expect(allowed).toBeGreaterThanOrEqual(sourceWidth);
       if (budget.maxChars !== null) {
         expect(budget.maxChars).toBeGreaterThanOrEqual(1);
-        if (!zhLike(profile)) {
-          expect(budget.maxChars).toBeGreaterThanOrEqual(
-            measureText(source, profile).charCount,
-          );
-        }
+        // The advertised limit must be spendable in full, whatever the source
+        // looks like. Stated in width rather than in character count on
+        // purpose: count is not the authority here and never was. A source
+        // built from unusually narrow glyphs (i, l, ".") or from zero-width
+        // marks genuinely does not buy room for that many *typical* target
+        // characters, so `maxChars >= sourceChars` is not a property this
+        // engine can honour — and asserting it would force the budget to
+        // advertise a limit `evaluateFit` then rejects, which is precisely the
+        // self-contradiction the coherence suite above exists to forbid.
+        const target = typicalCharOf(profile).repeat(budget.maxChars);
+        expect(
+          evaluateFit(source, target, role, profile).verdict,
+          `${profile.code}/${role} ${JSON.stringify(source)}: maxChars=${budget.maxChars}`,
+        ).not.toBe("overflow");
       }
     }
   });
-
-  function zhLike(profile: { glyphWidth: number }): boolean {
-    return profile.glyphWidth >= 1.5;
-  }
 
   it("handles the empty source without producing NaN", () => {
     for (const role of ALL_ROLES) {

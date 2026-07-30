@@ -12,7 +12,27 @@ export {
   inferLocaleFromFileName,
   JsonParseError,
   type ParseOptions,
+  type ParsedCatalog,
+  type CatalogFormatting,
 } from "./parse";
+
+export {
+  readJsonDocument,
+  JsonReadError,
+  MAX_NESTING_DEPTH,
+  type JsonDocument,
+} from "./json-reader";
+
+export {
+  orderKeys,
+  registerKeyOrder,
+  recordedKeyOrder,
+  resolveKeyOrder,
+  toSerializableKeyOrder,
+  keyOrderFromEntries,
+  type KeyOrderMap,
+  type SerializedKeyOrder,
+} from "./key-order";
 
 export {
   flattenJson,

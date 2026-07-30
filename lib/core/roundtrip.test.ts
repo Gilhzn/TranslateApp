@@ -178,6 +178,9 @@ function makeRandom(seed: number): () => number {
 
 const NASTY_KEYS = [
   "plain",
+  // Integer-like keys are the case a JS object cannot order on its own.
+  "7",
+  "12",
   "with.dot",
   "with[bracket]",
   "back\\slash",

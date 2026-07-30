@@ -59,6 +59,14 @@ export {
 export type { AngleTagShape, ValidationContext } from "./validators";
 
 export {
+  describePlaceholder,
+  isComplexIcu,
+  readIcuBlock,
+  readIcuBlocks,
+} from "./icu";
+export type { IcuBlock, IcuBranch } from "./icu";
+
+export {
   assertStructuralParity,
   deepEqualJson,
   jsonKind,

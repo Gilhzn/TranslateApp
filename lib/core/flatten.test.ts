@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "@/lib/types";
 import { collectTreeStats, flattenJson, rebuildTree } from "./flatten";
 import { decodeKey } from "./keys";
+import { readJsonDocument } from "./json-reader";
+import { recordedKeyOrder } from "./key-order";
 
 const keysOf = (tree: JsonValue): string[] =>
   flattenJson(tree).map((e) => e.key);
@@ -18,6 +20,23 @@ describe("flattenJson", () => {
       "alpha",
       "middle.second",
       "middle.first",
+    ]);
+  });
+
+  it("preserves document order for integer-like keys too", () => {
+    // A JS object literal would already have hoisted "7" to the front, so the
+    // document has to come from text — the reader records the authored order
+    // and flattenJson follows it rather than Object.keys.
+    const { root, keyOrder } = readJsonDocument(
+      '{"zeta":"one","items":{"101":"a","12":"b","7":"c","alpha":"d"},"9":"e"}',
+    );
+    expect(flattenJson(root, keyOrder).map((e) => e.key)).toEqual([
+      "zeta",
+      "items.101",
+      "items.12",
+      "items.7",
+      "items.alpha",
+      "9",
     ]);
   });
 
@@ -257,6 +276,24 @@ describe("rebuildTree", () => {
     const tree: JsonValue = { _comment: "internal", a: "A" };
     const out = rebuildTree(tree, new Map([["a", "Ä"]]));
     expect(out).toEqual({ _comment: "internal", a: "Ä" });
+  });
+
+  it("keeps integer-like keys in source order on the rebuilt node", () => {
+    const { root, keyOrder } = readJsonDocument(
+      '{"m":{"10":"ten","2":"two","alpha":"a"}}',
+    );
+    const out = rebuildTree(
+      root,
+      new Map([["m.10", "zehn"]]),
+      keyOrder,
+    ) as Record<string, JsonValue>;
+    const m = out["m"] as { [k: string]: JsonValue };
+    expect(recordedKeyOrder(m)).toEqual(["10", "2", "alpha"]);
+    expect(flattenJson(out).map((e) => [e.key, e.value])).toEqual([
+      ["m.10", "zehn"],
+      ["m.2", "two"],
+      ["m.alpha", "a"],
+    ]);
   });
 
   it("ignores translations for keys that do not exist", () => {

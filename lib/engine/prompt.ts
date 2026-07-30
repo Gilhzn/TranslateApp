@@ -496,8 +496,12 @@ function buildGlossarySection(
     out.push("", "Forced renderings — use exactly this target text:");
     for (const line of forced) {
       const flags = line.caseSensitive ? " [case-sensitive]" : "";
-      const note = line.note === undefined ? "" : ` — ${line.note}`;
-      out.push(`- ${JSON.stringify(line.term)} → ${JSON.stringify(line.target)}${flags}${note}`);
+      // Glossary entries are author-supplied free text; one bullet, one line.
+      const note = line.note === undefined ? "" : ` — ${inline(line.note)}`;
+      // `forced` is filtered on `target !== null`; the fallback only exists
+      // because that filter does not narrow the element type.
+      const target = line.target ?? "";
+      out.push(`- ${quoted(line.term)} → ${quoted(target)}${flags}${note}`);
     }
   }
   if (verbatim.length > 0) {
@@ -506,8 +510,8 @@ function buildGlossarySection(
       `No target is defined for the following terms in ${locale.code}, which means KEEP THEM VERBATIM IN ENGLISH — do not translate, transliterate, decline or pluralise them:`,
     );
     for (const line of verbatim) {
-      const note = line.note === undefined ? "" : ` — ${line.note}`;
-      out.push(`- ${JSON.stringify(line.term)}${note}`);
+      const note = line.note === undefined ? "" : ` — ${inline(line.note)}`;
+      out.push(`- ${quoted(line.term)}${note}`);
     }
   }
   out.push(
@@ -588,6 +592,47 @@ export function buildUserPrompt(request: ProviderRequest): string {
   return [header.join("\n"), ...blocks, footer.join("\n")].join("\n\n");
 }
 
+/**
+ * Collapse a value to a single line.
+ *
+ * The user prompt is a line-oriented record format (`field: value`, unit blocks
+ * separated by `--- UNIT n/m ---`). Several interpolated fields are supplied by
+ * the uploaded locale file rather than by us: `key` (the escaping in
+ * `lib/core/keys` covers `\ . [ ]` only, so a key may legally contain a
+ * newline), `developerNote` (free text harvested from `_comment`/`_context`),
+ * placeholder text, ambiguity notes and repair feedback. A newline inside any
+ * of those forges lines that are byte-identical to genuine ones — most
+ * dangerously a second `length:` line, which would silently replace the
+ * character budget the layout guarantee depends on.
+ *
+ * The prompt is the only layer in this module that can enforce that, so every
+ * untrusted value goes through here and becomes structurally incapable of
+ * adding a line. Interior whitespace runs are collapsed too, so the result
+ * cannot be padded out to look like a separate record. Beyond `\r`/`\n` this
+ * also folds the Unicode line separators (U+0085, U+2028, U+2029) and the
+ * vertical tab / form feed, which some renderers do break on.
+ */
+function inline(value: string): string {
+  return value
+    .replace(/[\r\n\u0085\u2028\u2029\v\f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
+/**
+ * Quote a value for the prompt, with the delimiters visible to the model.
+ *
+ * `JSON.stringify` escapes `\r` and `\n`, but per the JSON grammar it leaves
+ * U+2028 / U+2029 as raw characters even though ECMAScript (and a fair number
+ * of renderers) treat them as line terminators. Patching those two keeps a
+ * quoted value on one line under every reader.
+ */
+function quoted(value: string): string {
+  return JSON.stringify(value)
+    .replace(/\u2028/gu, "\\u2028")
+    .replace(/\u2029/gu, "\\u2029");
+}
+
 function isRepair(unit: TranslationUnit): boolean {
   return (
     (unit.repairFeedback !== undefined && unit.repairFeedback.length > 0) ||
@@ -609,26 +654,33 @@ function buildUnitBlock(
       ? `--- UNIT ${index + 1}/${total} ---  !! REPAIR PASS — YOUR PREVIOUS TRANSLATION OF THIS STRING WAS REJECTED !!`
       : `--- UNIT ${index + 1}/${total} ---`,
   );
-  lines.push(`key: ${unit.key}`);
+  // Every value below that originates in the uploaded file is inlined; see
+  // `inline`. The role is a closed union and its guidance comes from a frozen
+  // table, so those two are trusted. The budget sentence is generated, but it
+  // is inlined anyway so that "exactly one `length:` line per unit" is a
+  // structural property of this function rather than a property of `lib/layout`.
+  lines.push(`key: ${inline(unit.key)}`);
   lines.push(`role: ${unit.role} — ${roleGuidance(unit.role)}`);
-  lines.push(`source: ${JSON.stringify(unit.source)}`);
+  lines.push(`source: ${quoted(unit.source)}`);
   lines.push(
-    `length: ${describeBudgetForPrompt(unit.budget, locale, unit.source, unit.role)}`,
+    `length: ${inline(describeBudgetForPrompt(unit.budget, locale, unit.source, unit.role))}`,
   );
   lines.push(`placeholders: ${describePlaceholders(unit.placeholders)}`);
   lines.push(`ambiguity notes: ${describeAmbiguities(unit)}`);
-  if (unit.developerNote !== undefined && unit.developerNote.trim().length > 0) {
-    lines.push(`developer note: ${unit.developerNote.trim()}`);
+  const developerNote =
+    unit.developerNote === undefined ? "" : inline(unit.developerNote);
+  if (developerNote.length > 0) {
+    lines.push(`developer note: ${developerNote}`);
   }
   lines.push(`sibling keys: ${describeNeighbors(unit.neighbors)}`);
 
   if (repair) {
     lines.push("");
     lines.push(
-      `REJECTED PREVIOUS ATTEMPT: ${JSON.stringify(unit.previousAttempt ?? "")}`,
+      `REJECTED PREVIOUS ATTEMPT: ${quoted(unit.previousAttempt ?? "")}`,
     );
     lines.push(
-      `WHY IT WAS REJECTED: ${unit.repairFeedback ?? "It did not satisfy the constraints above."}`,
+      `WHY IT WAS REJECTED: ${inline(unit.repairFeedback ?? "It did not satisfy the constraints above.")}`,
     );
     lines.push(
       "REQUIRED: return a DIFFERENT string that fixes exactly this problem and nothing else. Do not resubmit the rejected text. Do not truncate it or bolt an ellipsis onto it — choose shorter words, or a shorter idiomatic phrasing, and keep every placeholder intact.",
@@ -645,7 +697,9 @@ function describePlaceholders(placeholders: readonly Placeholder[]): string {
   return ordered
     .map(
       (placeholder) =>
-        `${placeholder.raw} (${placeholder.kind}, arg ${JSON.stringify(placeholder.token)})`,
+        // `raw` is a verbatim slice of the source string, so it can carry a
+        // newline just as the source can.
+        `${inline(placeholder.raw)} (${placeholder.kind}, arg ${quoted(placeholder.token)})`,
     )
     .join("  ");
 }
@@ -655,7 +709,7 @@ function describeAmbiguities(unit: TranslationUnit): string {
   return unit.ambiguities
     .map(
       (flag) =>
-        `[${flag.kind}, confidence ${flag.confidence.toFixed(2)}] ${flag.note}`,
+        `[${flag.kind}, confidence ${flag.confidence.toFixed(2)}] ${inline(flag.note)}`,
     )
     .join(" | ");
 }
@@ -665,7 +719,8 @@ const MAX_NEIGHBORS = 8;
 
 function describeNeighbors(neighbors: readonly string[]): string {
   if (neighbors.length === 0) return "none";
-  const shown = neighbors.slice(0, MAX_NEIGHBORS);
+  // Neighbour keys come from the same untrusted key space as `unit.key`.
+  const shown = neighbors.slice(0, MAX_NEIGHBORS).map(inline);
   const extra = neighbors.length - shown.length;
   return extra > 0
     ? `${shown.join(", ")} (+${extra} more)`

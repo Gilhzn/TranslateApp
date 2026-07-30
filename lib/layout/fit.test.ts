@@ -10,7 +10,11 @@ import {
   verdictFor,
 } from "./fit";
 import { getLocaleProfile } from "./locales";
-import { estimateLongestLineWidth, estimateWidth } from "./metrics";
+import {
+  estimateLongestLineWidth,
+  estimateWidth,
+  typicalCharWidth,
+} from "./metrics";
 import { makeRandom, pick, randomString } from "./testing";
 
 const ALL_ROLES: readonly UiRole[] = [
@@ -208,11 +212,12 @@ describe("evaluateFit — invariants (property)", () => {
   });
 
   it("reports overBy in the target's own character units", () => {
-    // 3 extra Japanese glyphs (5.85em) must not be reported as ~11 characters.
+    // Japanese overflow must be counted in em boxes, not in Latin letters:
+    // 5.2em of excess is ~5 Japanese characters and ~10 German ones.
     const fit = evaluateFit("Go", "設定画面を開きます", "button", ja);
     expect(fit.verdict).toBe("overflow");
     const excess = fit.targetWidth - fit.allowedWidth;
-    expect(fit.overBy).toBeCloseTo(Math.ceil(excess / ja.glyphWidth), 0);
+    expect(fit.overBy).toBeCloseTo(Math.ceil(excess / typicalCharWidth(ja)), 0);
     // The same excess in German is far more characters.
     const german = evaluateFit("Go", "Einstellungen jetzt öffnen", "button", de);
     expect(german.overBy).toBeGreaterThan(fit.overBy);

@@ -1,5 +1,12 @@
 import type { JsonValue, StringEntry } from "@/lib/types";
 import { encodeKey } from "./keys";
+import {
+  orderKeys,
+  registerKeyOrder,
+  resolveKeyOrder,
+  setMember,
+  type KeyOrderMap,
+} from "./key-order";
 import { extractPlaceholders } from "./placeholders";
 import { classifyNonTranslatable } from "./translatable";
 import { inferRole } from "./roles";
@@ -13,6 +20,12 @@ import { detectAmbiguities } from "./ambiguity";
  * translations must change nothing but the string leaves that were substituted.
  * Everything else — key order, array length, numbers, booleans, nulls, empty
  * containers — is carried through untouched.
+ *
+ * "Key order" means the order the developer *wrote*, which is not the order a
+ * JavaScript object iterates in when keys look like integers. Both functions
+ * therefore take their ordering from `key-order.ts` rather than from
+ * `Object.keys`, either via an explicit {@link KeyOrderMap} or via the identity
+ * registry the reader populated.
  */
 
 /**
@@ -114,8 +127,16 @@ function buildEntry(
  * Walk the tree in document order, emitting one {@link StringEntry} per string
  * leaf. Numbers, booleans, nulls and empty containers produce no entry but are
  * left in the tree for reconstruction.
+ *
+ * @param keyOrder Source key order, as produced by the reader. Optional: when
+ * omitted, the order registered against each node's identity is used, and only
+ * a tree that reached here without passing through the reader falls back to
+ * `Object.keys`.
  */
-export function flattenJson(tree: JsonValue): StringEntry[] {
+export function flattenJson(
+  tree: JsonValue,
+  keyOrder?: KeyOrderMap,
+): StringEntry[] {
   const entries: StringEntry[] = [];
   const path: Array<string | number> = [];
 
@@ -139,7 +160,7 @@ export function flattenJson(tree: JsonValue): StringEntry[] {
       // A note attached to a section is useful to everything inside it, so it
       // propagates downward until a nearer note overrides it.
       const nextInherited = ctx.levelNote ?? inheritedNote;
-      for (const key of Object.keys(node)) {
+      for (const key of orderKeys(node, resolveKeyOrder(node, path, keyOrder))) {
         if (ctx.metaKeys.has(key)) continue;
         const child = node[key];
         if (child === undefined) continue;
@@ -163,15 +184,15 @@ export function flattenJson(tree: JsonValue): StringEntry[] {
  * flattener chose to skip (developer notes, numbers, booleans, nulls) survives
  * verbatim, and any key absent from `translations` keeps its source value.
  *
- * Caveat inherited from `JSON.parse`: JavaScript objects reorder integer-like
- * keys ("2" before "10"), so a source document using numeric string keys is
- * already reordered before this function ever sees it. The output is identical
- * to the parsed input in every case; byte-identity with the raw upload requires
- * an order-preserving parser, which the shared `JsonValue` type does not model.
+ * Source key order is carried onto the rebuilt objects as well, so the result
+ * can be handed straight to the serialiser without also passing `keyOrder`.
+ *
+ * @param keyOrder Source key order; see {@link flattenJson}.
  */
 export function rebuildTree(
   templateTree: JsonValue,
   translations: ReadonlyMap<string, string>,
+  keyOrder?: KeyOrderMap,
 ): JsonValue {
   const path: Array<string | number> = [];
 
@@ -194,13 +215,19 @@ export function rebuildTree(
     }
     if (isPlainObject(node)) {
       const out: { [k: string]: JsonValue } = {};
-      for (const key of Object.keys(node)) {
+      const keys = orderKeys(node, resolveKeyOrder(node, path, keyOrder));
+      const written: string[] = [];
+      for (const key of keys) {
         const child = node[key];
         if (child === undefined) continue;
         path.push(key);
-        out[key] = rebuild(child);
+        setMember(out, key, rebuild(child));
         path.pop();
+        written.push(key);
       }
+      // Integer-like keys would otherwise re-sort themselves in `out`, so the
+      // order travels with the new node too.
+      if (written.length > 0) registerKeyOrder(out, written);
       return out;
     }
     return node;

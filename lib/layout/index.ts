@@ -25,7 +25,8 @@ export {
 } from "./locales";
 
 export {
-  FULL_WIDTH_ADVANCE,
+  FULL_WIDTH_EM,
+  FULL_WIDTH_GLYPH_RATIO,
   MEAN_LATIN_ADVANCE,
   averageCharWidth,
   charAdvance,

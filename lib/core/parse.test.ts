@@ -23,6 +23,15 @@ describe("parseSourceFile", () => {
     expect(catalog.tree).toEqual({ app: { title: "LingoLoop", version: 3 } });
   });
 
+  it("carries the source key order of every object node", () => {
+    const catalog = parseSourceFile(
+      "en.json",
+      '{"app":{"3":"c","1":"a","title":"T"}}',
+    );
+    expect(catalog.keyOrder.get("")).toEqual(["app"]);
+    expect(catalog.keyOrder.get("app")).toEqual(["3", "1", "title"]);
+  });
+
   it("detects two-space, four-space and tab indentation", () => {
     expect(parseSourceFile("en.json", twoSpace).indent).toBe("  ");
     expect(detectIndent('{\n    "a": "b"\n}')).toBe("    ");
@@ -112,6 +121,19 @@ describe("parseSourceFile errors", () => {
     expect(error.snippet).toContain("^");
     expect(error.message).toContain("en.json");
     expect(error.message).toContain("line 3");
+  });
+
+  it("reports the exact character offset, not a scraped one", () => {
+    const broken = '{"a": 1, "b": }';
+    try {
+      parseSourceFile("en.json", broken);
+      expect.unreachable("expected a JsonParseError");
+    } catch (error) {
+      const parseError = error as JsonParseError;
+      expect(parseError.position).toBe(broken.indexOf("}"));
+      expect(parseError.line).toBe(1);
+      expect(parseError.column).toBe(broken.indexOf("}") + 1);
+    }
   });
 
   it("rejects an empty file with a helpful message", () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { getLocaleProfile } from "./locales";
 import {
-  FULL_WIDTH_ADVANCE,
+  FULL_WIDTH_EM,
+  FULL_WIDTH_GLYPH_RATIO,
+  MEAN_LATIN_ADVANCE,
   averageCharWidth,
   charAdvance,
   estimateLongestLineWidth,
@@ -9,12 +11,14 @@ import {
   measureText,
   typicalCharWidth,
 } from "./metrics";
+import { LOCALE_PROFILES } from "./locales";
 import {
   NON_COMBINING_SAMPLE_CHARS,
   SAMPLE_CHARS,
   makeRandom,
   pick,
   randomString,
+  typicalCharOf,
 } from "./testing";
 
 const en = getLocaleProfile("en");
@@ -70,26 +74,35 @@ describe("estimateWidth — Latin advance table", () => {
 describe("estimateWidth — scripts", () => {
   it("gives CJK ideographs, kana and Hangul a full em square", () => {
     for (const char of ["漢", "あ", "カ", "한", "Ａ", "、"]) {
-      expect(estimateWidth(char, ja)).toBeGreaterThanOrEqual(FULL_WIDTH_ADVANCE);
+      expect(estimateWidth(char, ja)).toBeGreaterThanOrEqual(FULL_WIDTH_EM);
     }
-    expect(estimateWidth("設定", ja)).toBeCloseTo(2 * ja.glyphWidth, 2);
-    expect(estimateWidth("设置", zh)).toBeCloseTo(2 * zh.glyphWidth, 2);
-    expect(estimateWidth("설정", ko)).toBeCloseTo(2 * ko.glyphWidth, 2);
+    const emJa = MEAN_LATIN_ADVANCE * ja.glyphWidth;
+    const emZh = MEAN_LATIN_ADVANCE * zh.glyphWidth;
+    const emKo = MEAN_LATIN_ADVANCE * ko.glyphWidth;
+    expect(estimateWidth("設定", ja)).toBeCloseTo(2 * emJa, 2);
+    expect(estimateWidth("设置", zh)).toBeCloseTo(2 * emZh, 2);
+    expect(estimateWidth("설정", ko)).toBeCloseTo(2 * emKo, 2);
   });
 
   it("measures full-width glyphs honestly even under a Latin profile", () => {
     // A stray ideograph inside a German string is still an em square.
-    expect(estimateWidth("漢", de)).toBeGreaterThanOrEqual(FULL_WIDTH_ADVANCE);
+    expect(estimateWidth("漢", de)).toBeGreaterThanOrEqual(FULL_WIDTH_EM);
   });
 
-  it("makes a short CJK string wider than a longer Latin one", () => {
-    // 2 Japanese characters beat 4 English ones — the trap that character
-    // counting walks straight into.
-    expect(estimateWidth("保存", ja)).toBeGreaterThan(estimateWidth("Save", ja));
+  it("makes a CJK string far wider than the same number of Latin characters", () => {
+    // The trap character counting walks straight into: these two strings are
+    // the same "length" and the Japanese one is nearly twice the width.
+    expect(estimateWidth("保存", ja)).toBeGreaterThan(
+      estimateWidth("ab", ja) * 1.8,
+    );
+    // And four Japanese characters beat four English ones comfortably.
+    expect(estimateWidth("設定画面", ja)).toBeGreaterThan(
+      estimateWidth("Save", ja) * 1.8,
+    );
   });
 
   it("keeps half-width katakana half-width", () => {
-    expect(estimateWidth("ｱ", ja)).toBeLessThan(FULL_WIDTH_ADVANCE / 2 + 0.1);
+    expect(estimateWidth("ｱ", ja)).toBeCloseTo(FULL_WIDTH_EM / 2, 5);
   });
 
   it("runs Arabic and Hebrew about 5% narrower than Latin", () => {
@@ -223,7 +236,8 @@ describe("measureText — multi-line", () => {
 
 describe("averageCharWidth / typicalCharWidth", () => {
   it("reflects the script of the measured text", () => {
-    expect(averageCharWidth("保存する", ja)).toBeGreaterThan(1.5);
+    // A CJK glyph is one em box; a German letter is roughly half of one.
+    expect(averageCharWidth("保存する", ja)).toBeGreaterThan(1.0);
     expect(averageCharWidth("Speichern", de)).toBeLessThan(0.7);
   });
 
@@ -232,9 +246,119 @@ describe("averageCharWidth / typicalCharWidth", () => {
     expect(averageCharWidth("\u200b", de)).toBe(typicalCharWidth(de));
   });
 
-  it("derives typical width from the profile's glyph width", () => {
+  it("derives typical width from the profile's glyph width, in em", () => {
     expect(typicalCharWidth(en)).toBeCloseTo(0.55, 2);
     expect(typicalCharWidth(ar)).toBeCloseTo(0.52, 2);
-    expect(typicalCharWidth(ja)).toBe(ja.glyphWidth);
+    // glyphWidth counts average Latin characters, so the em value is
+    // MEAN_LATIN_ADVANCE x glyphWidth — never glyphWidth itself.
+    expect(typicalCharWidth(ja)).toBeCloseTo(
+      MEAN_LATIN_ADVANCE * ja.glyphWidth,
+      3,
+    );
+    expect(typicalCharWidth(ja)).toBeLessThan(FULL_WIDTH_EM * 1.1);
+  });
+
+  it("is never optimistic about the script it describes", () => {
+    // `budget.ts` divides `allowedWidth` by this to advertise a character
+    // limit. If it reads narrower than an ordinary letter of the script
+    // actually measures, the advertised limit is one `evaluateFit` rejects —
+    // the module instructing the model to overflow and then punishing it for
+    // obeying. Cyrillic and Greek (0.57em against a 0.55em Latin baseline)
+    // were exactly that shape.
+    for (const code of Object.keys(LOCALE_PROFILES)) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) continue;
+      const letter = typicalCharOf(profile);
+      const cp = letter.codePointAt(0) ?? 0;
+      expect(
+        typicalCharWidth(profile),
+        `${code}: typical ${typicalCharWidth(profile)}em is below ${JSON.stringify(letter)} at ${charAdvance(cp, profile)}em`,
+      ).toBeGreaterThanOrEqual(charAdvance(cp, profile));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: the full-width unit error.
+// ---------------------------------------------------------------------------
+
+describe("full-width advances live in the same unit as the rest of the table", () => {
+  /**
+   * The table has exactly one unit, the em. `LocaleProfile.glyphWidth` does
+   * not: it counts *average Latin characters* (ja = 1.95 of them). Returning
+   * it — or the 1.9 documentation constant — straight out of `charAdvance`
+   * measured every CJK code point ~1.9x too wide, which made the fit engine
+   * reject the standard translations of "Download" and "Free" and issue
+   * budgets of "maximum 1 character". These pin the unit itself rather than
+   * any particular number, so the conversion cannot silently disappear again.
+   */
+  it("measures U+FF21 as one em box, not as 1.9 Latin characters", () => {
+    // U+FF21 is by definition the one-em-square variant of U+0041, so it can
+    // be at most ~1.0em and at most 2x the Latin capital it duplicates.
+    const fullWidthA = charAdvance(0xff21, ja);
+    const latinA = charAdvance(0x41, ja);
+    expect(fullWidthA).toBeGreaterThanOrEqual(FULL_WIDTH_EM * 0.9);
+    expect(fullWidthA).toBeLessThanOrEqual(FULL_WIDTH_EM * 1.1);
+    expect(fullWidthA).toBeLessThanOrEqual(2 * latinA);
+  });
+
+  it("keeps every full-width code point inside one em box, in every profile", () => {
+    for (const profile of [en, de, ja, zh, ko]) {
+      for (const char of ["漢", "あ", "カ", "한", "Ａ", "、", "！", "￥"]) {
+        const cp = char.codePointAt(0) ?? 0;
+        const advance = charAdvance(cp, profile);
+        expect(advance).toBeGreaterThanOrEqual(FULL_WIDTH_EM);
+        // 1.1em leaves room for the widest catalog profile (zh, 2.0 mean
+        // Latin characters = 1.10em) and for nothing else.
+        expect(
+          advance,
+          `${char} measured ${advance}em under ${profile.code}`,
+        ).toBeLessThanOrEqual(1.1);
+      }
+    }
+    // The documentation constant is a ratio, not an em value, and must stay
+    // well clear of the em range so confusing the two is loud, not subtle.
+    expect(FULL_WIDTH_GLYPH_RATIO).toBeGreaterThan(1.5);
+  });
+
+  it("reproduces the ~1.2x Japanese expansion the locale catalog claims", () => {
+    // locales.ts derives it: 0.60 character expansion x 1.95 glyph width =
+    // ~1.17. Japanese is slightly *wider* than English, not 2-3x wider.
+    const cases: Array<[string, string]> = [
+      [
+        "Are you sure you want to delete this file?",
+        "このファイルを削除してもよろしいですか？",
+      ],
+      ["Your session has expired.", "セッションの有効期限が切れました。"],
+      ["Download", "ダウンロード"],
+      ["Settings", "設定"],
+    ];
+    for (const [source, target] of cases) {
+      const ratio = estimateWidth(target, ja) / estimateWidth(source, en);
+      // 1.8 is the ceiling for an individual short string, where a single
+      // verbose word swings the ratio; the unit error put every one of these
+      // at 2.1x-2.9x, so it is still caught unambiguously.
+      expect(
+        ratio,
+        `"${source}" -> "${target}" measured ${ratio}x`,
+      ).toBeLessThan(1.8);
+    }
+    // The full sentence is the calibration case: a faithful translation of a
+    // whole sentence is where the 1.2x band actually applies.
+    const sentence =
+      estimateWidth("このファイルを削除してもよろしいですか？", ja) /
+      estimateWidth("Are you sure you want to delete this file?", en);
+    expect(sentence).toBeGreaterThan(0.9);
+    expect(sentence).toBeLessThan(1.4);
+  });
+
+  it("keeps half-width forms at half an em box", () => {
+    for (const char of ["ｱ", "ｶ", "ﾝ"]) {
+      expect(estimateWidth(char, ja)).toBeCloseTo(FULL_WIDTH_EM / 2, 5);
+    }
+    // Half-width katakana is genuinely narrower than its full-width spelling.
+    expect(estimateWidth("ｶﾀｶﾅ", ja)).toBeLessThan(
+      estimateWidth("カタカナ", ja),
+    );
   });
 });

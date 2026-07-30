@@ -1,4 +1,18 @@
-import { extractPlaceholders, stripPlaceholders } from "@/lib/core";
+import {
+  extractPlaceholders,
+  stripPlaceholders,
+  topLevelPlaceholders,
+} from "@/lib/core";
+import {
+  branchExpectation,
+  describePlaceholder,
+  icuArgumentReference,
+  joinBranchPath,
+  readIcuBlock,
+  readIcuBlocks,
+  type IcuBlock,
+  type IcuBranch,
+} from "./icu";
 import type {
   AmbiguityFlag,
   FitResult,
@@ -276,12 +290,29 @@ function isPositionalPrintf(p: Placeholder): boolean {
   return p.kind === "printf" && !/^\d+$/.test(p.token);
 }
 
+/**
+ * Occurrence count per identity.
+ *
+ * Callers MUST pass a list of *disjoint* placeholders (see
+ * {@link topLevelPlaceholders}). Feeding it the raw extraction result would
+ * count an ICU plural block once for the whole span and once more for every
+ * placeholder inside every branch — and since the branch count is a property of
+ * the target language, that inflated total can never match across locales.
+ */
 function countIdentities(list: readonly Placeholder[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const p of list) {
-    counts.set(placeholderIdentity(p), (counts.get(placeholderIdentity(p)) ?? 0) + 1);
+    const id = placeholderIdentity(p);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   return counts;
+}
+
+/** Distinct identities of a list of disjoint placeholders. */
+function identitySet(list: readonly Placeholder[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of list) out.add(placeholderIdentity(p));
+  return out;
 }
 
 function firstByIdentity(
@@ -293,6 +324,30 @@ function firstByIdentity(
     if (!map.has(id)) map.set(id, p);
   }
   return map;
+}
+
+/**
+ * The parts of a placeholder that are machine-read rather than human copy.
+ *
+ * For a simple placeholder that is the whole raw span. For a complex ICU
+ * argument it is the skeleton only — `{count, plural, one {` and friends — with
+ * the branch bodies blanked out, because those bodies are prose whose own
+ * placeholders are separately present in the extraction result. Scanning the
+ * whole span instead would report one defect twice: once against the nested
+ * placeholder and once against the block that contains it.
+ */
+function placeholderSkeleton(p: Placeholder): string {
+  const block = readIcuBlock(p);
+  if (block === null) return p.raw;
+  let out = "";
+  let cursor = 0;
+  for (const branch of block.branches) {
+    const start = branch.index - p.index;
+    if (start < cursor) continue;
+    out += p.raw.slice(cursor, start);
+    cursor = start + branch.text.length;
+  }
+  return out + p.raw.slice(cursor);
 }
 
 /** Invisible or non-ASCII spacing inside a placeholder body breaks lookup. */
@@ -517,11 +572,345 @@ function checkTagAttributes(
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// ICU complex-argument parity
+// ---------------------------------------------------------------------------
+
 /**
- * Compare placeholders by normalised token MULTISET, then by order.
+ * Result of the structural pass over `plural` / `select` / `selectordinal` /
+ * `choice` arguments.
+ *
+ * `explained` lists the identities this pass owns. The multiset comparison must
+ * skip them: it can only see "the block is there / not there", and its message
+ * would quote the block's raw span — English prose the model would then be told
+ * to reproduce character for character.
+ */
+interface ComplexParityResult {
+  issues: Issue[];
+  explained: Set<string>;
+}
+
+function icuDetail(
+  arg: string,
+  format: string,
+  branch: string | null,
+  extra: IssueDetail = {},
+): IssueDetail {
+  const detail: IssueDetail = { icu: true, icuArg: arg, icuFormat: format, ...extra };
+  if (branch !== null) detail["branch"] = branch;
+  return detail;
+}
+
+function groupBlocksByArg(blocks: readonly IcuBlock[]): Map<string, IcuBlock[]> {
+  const out = new Map<string, IcuBlock[]>();
+  for (const block of blocks) {
+    const bucket = out.get(block.arg);
+    if (bucket === undefined) out.set(block.arg, [block]);
+    else bucket.push(block);
+  }
+  return out;
+}
+
+/**
+ * The source branch a target branch is compared against for *attribute* parity.
+ *
+ * Branch sets do not line up across locales, so there is no positional pairing
+ * to be had. The same selector is the best match; `other` is the canonical
+ * fallback because CLDR guarantees every language has it; failing both, the last
+ * branch (which for `select` is the default). This only ever decides which tag's
+ * attributes are compared with which — the missing/added invariants below use
+ * the union/intersection over ALL source branches and never this one branch.
+ */
+function representativeSourceBranch(
+  source: IcuBlock,
+  label: string,
+): IcuBranch | undefined {
+  return (
+    source.branches.find((b) => b.label === label) ??
+    source.branches.find((b) => b.label === "other") ??
+    source.branches[source.branches.length - 1]
+  );
+}
+
+function firstOccurrenceByIdentity(
+  branches: readonly IcuBranch[],
+): Map<string, Placeholder> {
+  const out = new Map<string, Placeholder>();
+  for (const branch of branches) {
+    for (const p of topLevelPlaceholders(branch.placeholders)) {
+      const id = placeholderIdentity(p);
+      if (!out.has(id)) out.set(id, p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Compare the branches of two paired complex arguments.
+ *
+ * The invariant is deliberately a SET invariant, never a count one:
+ *   - `union` — every placeholder any source branch uses. A target branch that
+ *     uses something outside this set invented an interpolation.
+ *   - `required` — the intersection: placeholders every source branch uses.
+ *     Those are structural (`{name}` in "{name} added a file"), so every target
+ *     branch must carry them. Anything the source uses in only some branches is
+ *     optional, because the branch that omits it proves it is omissible.
+ *
+ * Branch COUNT is never compared. `en` has `one`/`other`, `ja` has `other`,
+ * `ru`/`pl` have `one`/`few`/`many`/`other`, `ar` has six: matching English's
+ * branch count is a bug in the translation, not a requirement.
+ */
+function compareIcuBlocks(
+  source: IcuBlock,
+  target: IcuBlock,
+  ctx: ValidationContext | undefined,
+  parentPath: string | null,
+  issues: Issue[],
+): void {
+  if (source.format !== target.format) {
+    issues.push(
+      classify(
+        "placeholder-malformed",
+        `The ICU argument ${icuArgumentReference(source.arg)} is a "${source.format}" in the source but a "${target.format}" in the translation. Keep the same format type.`,
+        opts(
+          ctx,
+          icuDetail(source.arg, source.format, parentPath, {
+            actualFormat: target.format,
+            reason: "icu-format-changed",
+            token: source.arg,
+          }),
+        ),
+      ),
+    );
+    // Branch semantics differ entirely between formats; comparing them now
+    // would bury the one actionable finding under derived noise.
+    return;
+  }
+
+  const branchIdentities = source.branches.map((b) =>
+    identitySet(topLevelPlaceholders(b.placeholders)),
+  );
+  const union = new Set<string>();
+  for (const set of branchIdentities) for (const id of set) union.add(id);
+
+  let required: Set<string> | null = null;
+  for (const set of branchIdentities) {
+    if (required === null) {
+      required = new Set(set);
+      continue;
+    }
+    for (const id of [...required]) if (!set.has(id)) required.delete(id);
+  }
+  const requiredIds = required ?? new Set<string>();
+  const examples = firstOccurrenceByIdentity(source.branches);
+
+  for (const targetBranch of target.branches) {
+    const path = joinBranchPath(parentPath, targetBranch.label);
+    const targetTop = topLevelPlaceholders(targetBranch.placeholders);
+    const targetIds = identitySet(targetTop);
+
+    // Attribute drift inside a branch is a distinct, more precise finding than
+    // "identity X missing, identity Y added"; run it first and let it claim the
+    // identities it explains.
+    const explained = new Set<string>();
+    const representative = representativeSourceBranch(source, targetBranch.label);
+    if (representative !== undefined) {
+      issues.push(
+        ...checkTagAttributes(
+          topLevelPlaceholders(representative.placeholders),
+          targetTop,
+          ctx,
+          explained,
+        ),
+      );
+    }
+
+    for (const id of requiredIds) {
+      if (targetIds.has(id) || explained.has(id)) continue;
+      const example = examples.get(id);
+      if (example === undefined) continue;
+      issues.push(
+        classify(
+          "placeholder-missing",
+          `The "${path}" branch of the ICU ${source.format} for ${icuArgumentReference(source.arg)} is missing ${describePlaceholder(example)}. Every branch of the source carries it, so every branch of the translation must too.`,
+          opts(
+            ctx,
+            icuDetail(source.arg, source.format, path, {
+              raw: example.raw,
+              token: example.token,
+              kind: example.kind,
+            }),
+          ),
+        ),
+      );
+    }
+
+    for (const p of targetTop) {
+      const id = placeholderIdentity(p);
+      if (union.has(id) || explained.has(id)) continue;
+      issues.push(
+        classify(
+          "placeholder-added",
+          `The "${path}" branch of the ICU ${source.format} for ${icuArgumentReference(source.arg)} uses ${describePlaceholder(p)}, which no branch of the source uses. Remove it.`,
+          opts(
+            ctx,
+            icuDetail(source.arg, source.format, path, {
+              raw: p.raw,
+              token: p.token,
+              kind: p.kind,
+            }),
+          ),
+        ),
+      );
+    }
+
+    // Nested complex arguments (a `select` inside a `plural` branch) get the
+    // same treatment, one level down, so their branch counts are just as free.
+    for (const p of targetTop) {
+      const nestedTarget = readIcuBlock(p);
+      if (nestedTarget === null) continue;
+      const sourceExample = examples.get(placeholderIdentity(p));
+      if (sourceExample === undefined) continue;
+      const nestedSource = readIcuBlock(sourceExample);
+      if (nestedSource === null) continue;
+      compareIcuBlocks(nestedSource, nestedTarget, ctx, path, issues);
+    }
+  }
+}
+
+/**
+ * Pair complex ICU arguments by argument name and compare them structurally.
+ *
+ * Pairing by NAME rather than by position or count is what makes this survive
+ * reordering and locale-driven branch differences. The two failure modes worth
+ * reporting are "the block for {count} is gone" (usually the model flattened the
+ * plural into one form, which breaks every count but one) and "the translation
+ * invented a block for an argument the string does not have".
+ *
+ * The reverse — the source has a plain `{count}` and the translation wraps it in
+ * a plural — is NOT reported. Languages with richer plural systems than English
+ * legitimately need a plural block where English needed none, and rejecting that
+ * would punish the best translations.
+ */
+function checkComplexArguments(
+  sourceTop: readonly Placeholder[],
+  targetTop: readonly Placeholder[],
+  ctx: ValidationContext | undefined,
+): ComplexParityResult {
+  const issues: Issue[] = [];
+  const explained = new Set<string>();
+
+  const sourceBlocks = readIcuBlocks(sourceTop);
+  const targetBlocks = readIcuBlocks(targetTop);
+  if (sourceBlocks.length === 0 && targetBlocks.length === 0) {
+    return { issues, explained };
+  }
+
+  for (const block of sourceBlocks) {
+    explained.add(placeholderIdentity(block.placeholder));
+  }
+  for (const block of targetBlocks) {
+    explained.add(placeholderIdentity(block.placeholder));
+  }
+
+  const sourceIds = identitySet(sourceTop);
+  const byArgSource = groupBlocksByArg(sourceBlocks);
+  const byArgTarget = groupBlocksByArg(targetBlocks);
+
+  for (const [arg, sourceList] of byArgSource) {
+    const targetList = byArgTarget.get(arg) ?? [];
+    const pairs = Math.min(sourceList.length, targetList.length);
+    for (let i = 0; i < pairs; i++) {
+      const s = sourceList[i];
+      const t = targetList[i];
+      if (s === undefined || t === undefined) continue;
+      compareIcuBlocks(s, t, ctx, null, issues);
+    }
+    for (let i = pairs; i < sourceList.length; i++) {
+      const s = sourceList[i];
+      if (s === undefined) continue;
+      issues.push(
+        classify(
+          "placeholder-missing",
+          `The translation is missing the ICU ${s.format} for ${icuArgumentReference(s.arg)}. Keep the block — write ${icuArgumentReference(s.arg)} as a ${s.format} argument, translate the text inside each branch, and ${branchExpectation(s.format)}. Do not flatten it to a single form.`,
+          opts(
+            ctx,
+            icuDetail(s.arg, s.format, null, {
+              token: s.placeholder.token,
+              kind: s.placeholder.kind,
+              reason: "icu-block-missing",
+            }),
+          ),
+        ),
+      );
+    }
+  }
+
+  for (const [arg, targetList] of byArgTarget) {
+    const sourceList = byArgSource.get(arg) ?? [];
+    for (let i = sourceList.length; i < targetList.length; i++) {
+      const t = targetList[i];
+      if (t === undefined) continue;
+      const identity = placeholderIdentity(t.placeholder);
+      if (sourceIds.has(identity)) {
+        // The source has a plain `{count}` here and the translation promoted it
+        // to a plural. That is correct localisation, not a defect — but the
+        // branches it invented still may not reference unknown arguments.
+        for (const branch of t.branches) {
+          for (const p of topLevelPlaceholders(branch.placeholders)) {
+            if (sourceIds.has(placeholderIdentity(p))) continue;
+            issues.push(
+              classify(
+                "placeholder-added",
+                `The "${branch.label}" branch of the ICU ${t.format} for ${icuArgumentReference(t.arg)} uses ${describePlaceholder(p)}, which the source string does not contain. Remove it.`,
+                opts(
+                  ctx,
+                  icuDetail(t.arg, t.format, branch.label, {
+                    raw: p.raw,
+                    token: p.token,
+                    kind: p.kind,
+                  }),
+                ),
+              ),
+            );
+          }
+        }
+        continue;
+      }
+      issues.push(
+        classify(
+          "placeholder-added",
+          `The translation adds an ICU ${t.format} for ${icuArgumentReference(t.arg)}, but ${icuArgumentReference(t.arg)} is not an argument of the source string. Remove it — the runtime has no value to pass in.`,
+          opts(
+            ctx,
+            icuDetail(t.arg, t.format, null, {
+              token: t.placeholder.token,
+              kind: t.placeholder.kind,
+              reason: "icu-block-added",
+            }),
+          ),
+        ),
+      );
+    }
+  }
+
+  return { issues, explained };
+}
+
+/**
+ * Compare placeholders by normalised token MULTISET, then by order — but only
+ * across placeholders whose spans are DISJOINT.
  *
  * Counts, not sets: "{name} and {name}" needs `{name}` twice in the target, and
  * a model that emits it once has silently dropped an interpolation site.
+ *
+ * The multiset is built from {@link topLevelPlaceholders}, so an ICU
+ * plural/select block counts once and the placeholders inside its branches are
+ * NOT folded into the same buckets. Those branches are compared separately by
+ * {@link checkComplexArguments} with a locale-stable set invariant, because the
+ * number of branches — and therefore the number of times anything inside them
+ * occurs — is decided by the target language's CLDR plural rules, not by the
+ * source.
  */
 export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   const issues: Issue[] = [];
@@ -539,14 +928,20 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
     return issues;
   }
 
+  // Disjoint views. Everything that compares COUNTS has to use these: a
+  // placeholder inside a plural branch is contained in the block's span, and the
+  // number of branches is a property of the target language.
+  const sourceTop = topLevelPlaceholders(sourceList);
+  const targetTop = topLevelPlaceholders(targetList);
+
   // --- 1. Placeholders that were recognised but carry invisible junk --------
   for (const p of targetList) {
-    const bad = invisibleInsidePlaceholder(p.raw);
+    const bad = invisibleInsidePlaceholder(placeholderSkeleton(p));
     if (bad !== null) {
       issues.push(
         classify(
           "placeholder-malformed",
-          `Placeholder ${JSON.stringify(p.raw)} contains an invisible character (${formatCodePoint(bad)}) inside its delimiters; at runtime the interpolation key will not match.`,
+          `Placeholder ${describePlaceholder(p)} contains an invisible character (${formatCodePoint(bad)}) inside its delimiters; at runtime the interpolation key will not match.`,
           opts(ctx, {
             raw: p.raw,
             token: p.token,
@@ -572,8 +967,8 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   }
 
   // --- 3. Stray braces the target invented ---------------------------------
-  const sourceStray = strayBraceCount(source, sourceList);
-  const targetStray = strayBraceCount(target, targetList);
+  const sourceStray = strayBraceCount(source, sourceTop);
+  const targetStray = strayBraceCount(target, targetTop);
   if (targetStray > sourceStray) {
     issues.push(
       classify(
@@ -589,10 +984,10 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   }
 
   // --- 4. Multiset comparison ---------------------------------------------
-  const sourceCounts = countIdentities(sourceList);
-  const targetCounts = countIdentities(targetList);
-  const sourceFirst = firstByIdentity(sourceList);
-  const targetFirst = firstByIdentity(targetList);
+  const sourceCounts = countIdentities(sourceTop);
+  const targetCounts = countIdentities(targetTop);
+  const sourceFirst = firstByIdentity(sourceTop);
+  const targetFirst = firstByIdentity(targetTop);
 
   // Tokens whose absence is already explained by a corrupted echo. Whatever
   // mangled form the model wrote is *the same placeholder*, so reporting it a
@@ -604,13 +999,20 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   // Attribute drift first: it explains identities that would otherwise read as
   // a missing/added pair.
   issues.push(
-    ...checkTagAttributes(sourceList, targetList, ctx, explainedIdentities),
+    ...checkTagAttributes(sourceTop, targetTop, ctx, explainedIdentities),
   );
+
+  // --- 4b. ICU complex arguments, compared structurally --------------------
+  // Runs before the multiset loops and claims the block identities, whose
+  // whole-span raw must never reach a message.
+  const complex = checkComplexArguments(sourceTop, targetTop, ctx);
+  issues.push(...complex.issues);
 
   for (const [id, want] of sourceCounts) {
     const have = targetCounts.get(id) ?? 0;
     if (have >= want) continue;
     if (explainedIdentities.has(id)) continue;
+    if (complex.explained.has(id)) continue;
     const example = sourceFirst.get(id);
     if (example === undefined) continue;
 
@@ -656,6 +1058,7 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
     const want = sourceCounts.get(id) ?? 0;
     if (have <= want) continue;
     if (explainedIdentities.has(id)) continue;
+    if (complex.explained.has(id)) continue;
     const example = targetFirst.get(id);
     if (example === undefined) continue;
     if (want === 0 && explainedTokens.has(example.token)) continue;
@@ -677,9 +1080,11 @@ export const validatePlaceholderParity: Validator = (source, target, ctx) => {
   }
 
   // --- 5. Ordering ---------------------------------------------------------
+  // Top-level only: word order *inside* a plural branch is grammar, and the
+  // branches of two locales are not even in correspondence.
   const orderIssue = checkOrdering(
-    sourceList,
-    targetList,
+    sourceTop,
+    targetTop,
     sourceCounts,
     targetCounts,
     ctx,
@@ -1020,6 +1425,118 @@ function readTags(list: readonly Placeholder[]): TagInfo[] {
   return out;
 }
 
+/** " in the \"few\" branch" — appended to a message when inside an ICU branch. */
+function branchSuffix(branch: string | null): string {
+  return branch === null ? "" : ` in the "${branch}" branch`;
+}
+
+function branchDetail(branch: string | null, detail: IssueDetail): IssueDetail {
+  return branch === null ? detail : { ...detail, branch };
+}
+
+/**
+ * Run the nesting check over ONE region of the string.
+ *
+ * A region is either the top level or the body of a single ICU branch. Regions
+ * are checked independently because ICU branches are alternatives, not
+ * concatenation: `one {<b>x</b>} other {<b>y</b>}` renders exactly one of them,
+ * so balance holds per branch. Checking the flattened string instead would let
+ * `one {<b>x} other {y</b>}` — which renders unbalanced markup for every count —
+ * pass, while a locale that needs four branches would see its tags interleaved
+ * into one long, meaningless stack.
+ */
+function checkTagRegion(
+  list: readonly Placeholder[],
+  paired: ReadonlySet<string>,
+  ctx: ValidationContext | undefined,
+  branch: string | null,
+  issues: Issue[],
+): void {
+  const top = topLevelPlaceholders(list);
+  const stack: TagInfo[] = [];
+
+  for (const tag of readTags(top)) {
+    if (tag.selfClosing) continue;
+    if (!paired.has(tag.name)) continue;
+
+    if (!tag.closing) {
+      stack.push(tag);
+      continue;
+    }
+
+    const open = stack[stack.length - 1];
+    if (open === undefined) {
+      issues.push(
+        classify(
+          "tag-imbalance",
+          `Closing tag ${JSON.stringify(tag.raw)} at index ${tag.index}${branchSuffix(branch)} has no matching opening tag.`,
+          opts(
+            ctx,
+            branchDetail(branch, {
+              tag: tag.raw,
+              name: tag.name,
+              reason: "unopened",
+            }),
+          ),
+        ),
+      );
+      continue;
+    }
+    if (open.name !== tag.name) {
+      issues.push(
+        classify(
+          "tag-imbalance",
+          `Tags are crossed${branchSuffix(branch)}: ${JSON.stringify(open.raw)} is still open but ${JSON.stringify(tag.raw)} closes first. Markup must nest, not overlap.`,
+          opts(
+            ctx,
+            branchDetail(branch, {
+              tag: tag.raw,
+              expected: `</${open.name}>`,
+              reason: "crossed",
+            }),
+          ),
+        ),
+      );
+      // Recover by discarding the mismatched open so one crossing does not
+      // cascade into an "unclosed" report for every remaining tag.
+      stack.pop();
+      continue;
+    }
+    stack.pop();
+  }
+
+  for (const unclosed of stack) {
+    issues.push(
+      classify(
+        "tag-imbalance",
+        `Tag ${JSON.stringify(unclosed.raw)}${branchSuffix(branch)} is never closed; add ${JSON.stringify(`</${unclosed.name}>`)}.`,
+        opts(
+          ctx,
+          branchDetail(branch, {
+            tag: unclosed.raw,
+            expected: `</${unclosed.name}>`,
+            reason: "unclosed",
+          }),
+        ),
+      ),
+    );
+  }
+
+  for (const p of top) {
+    const block = readIcuBlock(p);
+    if (block === null) continue;
+    for (const sub of block.branches) {
+      checkTagRegion(
+        sub.placeholders,
+        paired,
+        ctx,
+        joinBranchPath(branch, sub.label),
+        issues,
+      );
+    }
+  }
+}
+
 /**
  * Every tag opened in the target must be closed there, correctly nested.
  *
@@ -1028,11 +1545,16 @@ function readTags(list: readonly Placeholder[]): TagInfo[] {
  * sibling string that closes it), and demanding balance for those would fire
  * on correct input. Names that the source itself leaves unbalanced are covered
  * by the multiset parity check instead.
+ *
+ * "Paired in the source" is decided over the whole flattened source — a name the
+ * source pairs anywhere is a name the target is expected to pair — but the
+ * balance itself is checked per region, see {@link checkTagRegion}.
  */
 export const validateTagBalance: Validator = (source, target, ctx) => {
-  const sourceTags = readTags(sourcePlaceholdersOf(source, ctx));
-  const targetTags = readTags(extractPlaceholders(target));
-  if (sourceTags.length === 0 && targetTags.length === 0) return [];
+  const sourceList = sourcePlaceholdersOf(source, ctx);
+  const targetList = extractPlaceholders(target);
+  const sourceTags = readTags(sourceList);
+  if (sourceTags.length === 0 && readTags(targetList).length === 0) return [];
 
   const opens = new Map<string, number>();
   const closes = new Map<string, number>();
@@ -1048,62 +1570,7 @@ export const validateTagBalance: Validator = (source, target, ctx) => {
   if (paired.size === 0) return [];
 
   const issues: Issue[] = [];
-  const stack: TagInfo[] = [];
-
-  for (const tag of targetTags) {
-    if (tag.selfClosing) continue;
-    if (!paired.has(tag.name)) continue;
-
-    if (!tag.closing) {
-      stack.push(tag);
-      continue;
-    }
-
-    const top = stack[stack.length - 1];
-    if (top === undefined) {
-      issues.push(
-        classify(
-          "tag-imbalance",
-          `Closing tag ${JSON.stringify(tag.raw)} at index ${tag.index} has no matching opening tag.`,
-          opts(ctx, { tag: tag.raw, name: tag.name, reason: "unopened" }),
-        ),
-      );
-      continue;
-    }
-    if (top.name !== tag.name) {
-      issues.push(
-        classify(
-          "tag-imbalance",
-          `Tags are crossed: ${JSON.stringify(top.raw)} is still open but ${JSON.stringify(tag.raw)} closes first. Markup must nest, not overlap.`,
-          opts(ctx, {
-            tag: tag.raw,
-            expected: `</${top.name}>`,
-            reason: "crossed",
-          }),
-        ),
-      );
-      // Recover by discarding the mismatched open so one crossing does not
-      // cascade into an "unclosed" report for every remaining tag.
-      stack.pop();
-      continue;
-    }
-    stack.pop();
-  }
-
-  for (const unclosed of stack) {
-    issues.push(
-      classify(
-        "tag-imbalance",
-        `Tag ${JSON.stringify(unclosed.raw)} is never closed; add ${JSON.stringify(`</${unclosed.name}>`)}.`,
-        opts(ctx, {
-          tag: unclosed.raw,
-          expected: `</${unclosed.name}>`,
-          reason: "unclosed",
-        }),
-      ),
-    );
-  }
-
+  checkTagRegion(targetList, paired, ctx, null, issues);
   return issues;
 };
 

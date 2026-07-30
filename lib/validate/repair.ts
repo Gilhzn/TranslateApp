@@ -6,7 +6,9 @@ import type {
   Placeholder,
   TranslationUnit,
 } from "@/lib/types";
+import { topLevelPlaceholders } from "@/lib/core";
 import { classify, summarizeIssues } from "./errors";
+import { branchExpectation, icuArgumentReference, readIcuBlock } from "./icu";
 import { placeholderIdentity } from "./validators";
 
 /**
@@ -200,7 +202,73 @@ function attributeDirective(issue: Issue, reason: string, tagRaw: string): strin
   );
 }
 
+/**
+ * Directive for a finding about an ICU `plural` / `select` argument.
+ *
+ * These get their own authoring path because the generic "reproduce it
+ * character for character as X" line is actively harmful here: X would be the
+ * whole `{count, plural, one {…} other {…}}` span, i.e. English prose, and the
+ * branch set of a correct translation is dictated by the target language's CLDR
+ * rules rather than by the source. So the directive names the ARGUMENT, tells
+ * the model to keep the block, and explicitly licenses a different branch count.
+ */
+function icuDirective(issue: Issue): string | null {
+  if (issue.detail?.["icu"] !== true) return null;
+  const arg = detailString(issue, "icuArg");
+  const format = detailString(issue, "icuFormat");
+  if (arg === null || format === null) return null;
+  const reference = icuArgumentReference(arg);
+  const branch = detailString(issue, "branch");
+  const raw = detailString(issue, "raw");
+  const reason = detailString(issue, "reason");
+
+  if (reason === "icu-format-changed") {
+    const actualFormat = detailString(issue, "actualFormat");
+    return (
+      `The argument ${reference} must stay an ICU "${format}" argument` +
+      `${actualFormat !== null ? `, but you wrote a "${actualFormat}"` : ""}. ` +
+      `Write it as ${arg}, ${format}, … and ${branchExpectation(format)}.`
+    );
+  }
+  if (reason === "icu-block-missing") {
+    const skeleton = `{${arg}, ${format}, …}`;
+    return (
+      `Your output dropped the ICU ${format} block for ${reference}. Keep the block — write ` +
+      `${skeleton}, translate the text inside each branch, and ${branchExpectation(format)}. ` +
+      `Do not flatten it to a single form, and do not copy the source's branch text verbatim.`
+    );
+  }
+  if (reason === "icu-block-added") {
+    return (
+      `Your output wraps ${reference} in an ICU ${format} block, but ${reference} is not an ` +
+      `argument of this string — the runtime has no value to pass in. Remove the block.`
+    );
+  }
+
+  const where =
+    branch !== null ? `the "${branch}" branch of the ${format} for ${reference}` : reference;
+  if (issue.code === "placeholder-added") {
+    return (
+      `${capitalise(where)} uses ${raw ?? "a placeholder"}, which no branch of the source uses. ` +
+      `Remove it — only the arguments the source declares may appear.`
+    );
+  }
+  return (
+    `${capitalise(where)} is missing ${raw ?? "a placeholder"}. Add it inside that branch, ` +
+    `spelled exactly as ${raw ?? "in the source"}. Keep the branch set your language requires — ` +
+    `do not delete branches to make the counts match.`
+  );
+}
+
+function capitalise(value: string): string {
+  const first = value.slice(0, 1);
+  return first.length === 0 ? value : first.toUpperCase() + value.slice(1);
+}
+
 function placeholderDirective(issue: Issue): string {
+  const icu = icuDirective(issue);
+  if (icu !== null) return icu;
+
   const raw = detailString(issue, "raw");
   const expected = detailNumber(issue, "expected");
   const actual = detailNumber(issue, "actual");
@@ -324,19 +392,64 @@ function directiveFor(
   return String(unhandled);
 }
 
-function requiredPlaceholderLine(placeholders: readonly Placeholder[]): string | null {
-  if (placeholders.length === 0) return null;
-  const counts = new Map<string, { raw: string; count: number }>();
-  for (const p of placeholders) {
+/**
+ * The standing constraints about interpolation, restated at the end of every
+ * repair prompt so a rewrite that fixes the length does not drop a placeholder.
+ *
+ * Two things this must never do, both of which it used to:
+ *
+ *  1. Build the list from the raw extraction result. An ICU plural block and
+ *     every placeholder inside its branches occupy overlapping spans, so the
+ *     block and its nested arguments collapsed into one bucket with an inflated
+ *     `×N` count.
+ *  2. Print a complex ICU block's raw span under the heading "must appear
+ *     exactly as written". That span is English prose. Ordering it reproduced
+ *     verbatim contradicts the translation task outright — and, when the entry
+ *     also has a character budget, contradicts the budget as well.
+ *
+ * So the list is built from the disjoint (top-level) placeholders, and a complex
+ * argument is rendered as its argument name plus an instruction that leaves the
+ * branch set to the target language.
+ */
+function requiredPlaceholderLines(
+  placeholders: readonly Placeholder[],
+): string[] {
+  const top = topLevelPlaceholders(placeholders);
+  if (top.length === 0) return [];
+
+  const verbatim = new Map<string, { raw: string; count: number }>();
+  const blocks = new Map<string, string>();
+
+  for (const p of top) {
     const id = placeholderIdentity(p);
-    const existing = counts.get(id);
+    const block = readIcuBlock(p);
+    if (block !== null) {
+      if (!blocks.has(id)) {
+        blocks.set(
+          id,
+          `${icuArgumentReference(block.arg)} (ICU ${block.format} — keep the ${block.format} block, translate each branch, and ${branchExpectation(block.format)})`,
+        );
+      }
+      continue;
+    }
+    const existing = verbatim.get(id);
     if (existing) existing.count += 1;
-    else counts.set(id, { raw: p.raw, count: 1 });
+    else verbatim.set(id, { raw: p.raw, count: 1 });
   }
-  const rendered = [...counts.values()].map(({ raw, count }) =>
-    count === 1 ? raw : `${raw} ×${count}`,
-  );
-  return `Placeholders that must appear exactly as written: ${rendered.join(", ")}.`;
+
+  const lines: string[] = [];
+  if (verbatim.size > 0) {
+    const rendered = [...verbatim.values()].map(({ raw, count }) =>
+      count === 1 ? raw : `${raw} ×${count}`,
+    );
+    lines.push(
+      `Placeholders that must appear exactly as written: ${rendered.join(", ")}.`,
+    );
+  }
+  if (blocks.size > 0) {
+    lines.push(`ICU arguments that must survive: ${[...blocks.values()].join(", ")}.`);
+  }
+  return lines;
 }
 
 /**
@@ -397,8 +510,7 @@ export function buildRepairFeedback(
   });
 
   const constraints: string[] = [];
-  const placeholderLine = requiredPlaceholderLine(unit.placeholders);
-  if (placeholderLine !== null) constraints.push(placeholderLine);
+  constraints.push(...requiredPlaceholderLines(unit.placeholders));
   if (unit.budget.maxChars !== null) {
     constraints.push(`Hard limit: ${unit.budget.maxChars} characters (${unit.budget.rationale}).`);
   } else if (fit !== null && fit.verdict === "overflow") {

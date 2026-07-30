@@ -29,17 +29,40 @@ import type { LocaleProfile } from "@/lib/types";
 // ---------------------------------------------------------------------------
 
 /**
- * Advance of a full-width (CJK / fullwidth-forms) glyph, in em, relative to an
- * average Latin letter. A full-width glyph is full-width regardless of which
- * locale profile is doing the measuring, so this is a floor rather than a
- * lookup: `max(profile.glyphWidth, FULL_WIDTH_ADVANCE)`. That way a stray
- * Japanese character inside a German string is still measured honestly, while
- * a Japanese profile (glyphWidth 1.95) is free to be wider still.
+ * Advance of a full-width glyph, **in em**.
+ *
+ * This table has exactly one unit: the em, i.e. the font's advance divided by
+ * its units-per-em ('a' = 0.55em in Inter/SF at regular weight). A CJK
+ * ideograph, kana, Hangul syllable or fullwidth form is by definition designed
+ * inside the em box — Unicode East Asian Width F/W — so its advance *is* one
+ * em. U+FF21 FULLWIDTH LATIN CAPITAL A is the one-em-square variant of
+ * U+0041 (0.66em); it cannot measure more than 1.0em.
+ *
+ * Used as a floor rather than a lookup, so a stray Japanese character inside a
+ * German string is still measured honestly at a full em square, while a
+ * Japanese profile (glyphWidth 1.95, i.e. 1.95 mean-Latin characters =
+ * 1.0725em) is free to be marginally wider still.
  */
-export const FULL_WIDTH_ADVANCE = 1.9;
+export const FULL_WIDTH_EM = 1.0;
 
-/** Advance of a half-width katakana glyph (U+FF61..U+FF9F). */
-const HALF_WIDTH_KANA_ADVANCE = 0.55;
+/**
+ * How many *average Latin characters* wide a full-width glyph is. This is the
+ * unit `LocaleProfile.glyphWidth` is expressed in — a ratio, not an em value —
+ * and it is what the prompt copy quotes to the model ("each character renders
+ * about 1.95x as wide as a Latin letter").
+ *
+ * It exists only for documentation and copy. It must never be returned from
+ * `charAdvance`: multiplying it by `MEAN_LATIN_ADVANCE` is what converts it
+ * into this table's unit. Returning it raw measured every CJK code point ~1.9x
+ * too wide, which made every ja/ko/zh budget unsatisfiable.
+ */
+export const FULL_WIDTH_GLYPH_RATIO = 1.9;
+
+/**
+ * Advance of a half-width katakana glyph (U+FF61..U+FF9F), in em. Half the em
+ * box, by construction — that is what "half-width" names.
+ */
+const HALF_WIDTH_KANA_ADVANCE = 0.5;
 
 /** Mean advance of a lowercase Latin letter — the "one character" baseline. */
 export const MEAN_LATIN_ADVANCE = 0.55;
@@ -270,7 +293,11 @@ export function charAdvance(cp: number, profile: LocaleProfile): number {
   if (inRanges(cp, ZERO_WIDTH_RANGES)) return 0;
 
   if (inRanges(cp, FULL_WIDTH_RANGES)) {
-    return Math.max(profile.glyphWidth, FULL_WIDTH_ADVANCE);
+    // `glyphWidth` counts average Latin characters, so it has to be converted
+    // into em before it can be compared with anything else in this table.
+    // A Latin profile (glyphWidth 1.0) yields 0.55em, below the em box, so the
+    // floor is what makes a stray ideograph inside a German string honest.
+    return Math.max(MEAN_LATIN_ADVANCE * profile.glyphWidth, FULL_WIDTH_EM);
   }
 
   // Halfwidth katakana / halfwidth Hangul: explicitly *not* full width.
@@ -451,21 +478,77 @@ export function averageCharWidth(
 }
 
 /**
- * The advance a "typical" character of this locale's script occupies.
- * Derived from the profile so unknown locales behave sensibly:
- *   Latin/Cyrillic (glyphWidth 1.0)  -> 0.55em
- *   Arabic/Hebrew  (glyphWidth 0.95) -> 0.52em
- *   Indic          (glyphWidth 1.13) -> 0.62em
- *   CJK            (glyphWidth ~2.0) -> the full em square itself
+ * An ordinary lowercase letter of each script, by language subtag.
  *
- * These must stay in step with `charAdvance`: `budget.ts` divides an allowed
+ * `LocaleProfile.glyphWidth` is one scalar per locale, but `charAdvance`
+ * classifies per script, and the two only agree to within a few hundredths.
+ * Rather than restate the advances here — restating them is exactly how the
+ * table and the budget drifted apart — each entry names a letter and the real
+ * advance is read back out of `charAdvance`. Anything not listed falls through
+ * to the profile-derived value, which is correct for Latin (0.55em) and
+ * conservative elsewhere.
+ */
+const SCRIPT_SAMPLE_LETTER: Readonly<Record<string, string>> = {
+  // Cyrillic and Greek measure 0.57em, above the 0.55em Latin baseline their
+  // glyphWidth of 1.0 implies. Understating them by 0.02em is enough to
+  // advertise a `maxChars` that `evaluateFit` then calls "tight".
+  ru: "е",
+  uk: "е",
+  be: "е",
+  bg: "е",
+  sr: "е",
+  mk: "е",
+  kk: "е",
+  ky: "е",
+  mn: "е",
+  tg: "е",
+  el: "α",
+  // Hebrew letters are 0.53em, marginally above the 0.523em the RTL glyph
+  // width implies.
+  he: "ש",
+  yi: "ש",
+  ar: "م",
+  fa: "م",
+  ur: "م",
+  ps: "م",
+  ckb: "م",
+  ug: "م",
+  th: "ก",
+  hi: "क",
+  mr: "क",
+  ne: "क",
+  bn: "ক",
+  ta: "க",
+};
+
+/**
+ * The advance a "typical" character of this locale's script occupies, in em.
+ *
+ *   Latin          (glyphWidth 1.0)  -> 0.55em
+ *   Cyrillic/Greek (glyphWidth 1.0)  -> 0.57em  (via the sample letter)
+ *   Arabic/Hebrew  (glyphWidth 0.95) -> ~0.53em
+ *   Indic          (glyphWidth 1.13) -> 0.62em
+ *   CJK            (glyphWidth 1.95) -> 1.073em, i.e. 1.95 mean Latin letters
+ *
+ * Note the CJK line: `glyphWidth` is a count of *average Latin characters*,
+ * not an em value, so it has to be multiplied by `MEAN_LATIN_ADVANCE` exactly
+ * like it is inside `charAdvance`. Returning it raw was a unit error that
+ * measured every CJK string ~1.9x too wide.
+ *
+ * These must stay in step with `charAdvance` — `budget.ts` divides an allowed
  * width by this number to advertise a character limit to the model, so any
  * script where this reads narrower than the table actually measures produces a
- * limit that `evaluateFit` will then reject as overflow.
+ * limit that `evaluateFit` will then reject. Hence `Math.max`: the answer is
+ * allowed to be conservative, never optimistic.
  */
 export function typicalCharWidth(profile: LocaleProfile): number {
-  if (profile.glyphWidth >= 1.5) return profile.glyphWidth;
-  return round3(MEAN_LATIN_ADVANCE * profile.glyphWidth);
+  const derived = MEAN_LATIN_ADVANCE * profile.glyphWidth;
+  const language = profile.code.split("-")[0]?.toLowerCase() ?? "";
+  const sample = SCRIPT_SAMPLE_LETTER[language];
+  const sampleCp = sample === undefined ? undefined : sample.codePointAt(0);
+  const measured =
+    sampleCp === undefined ? 0 : charAdvance(sampleCp, profile);
+  return round3(Math.max(derived, measured));
 }
 
 /**

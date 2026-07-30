@@ -54,6 +54,22 @@ export function RowDetail({ row, ctx, direction, className }: RowDetailProps) {
     >
       <div className="grid gap-x-8 gap-y-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <section className="flex min-w-0 flex-col gap-3">
+          {/*
+            The table truncates all three of these to keep rows dense; this is
+            where the untruncated values live, reachable by keyboard.
+          */}
+          <Section title="String">
+            <dl className="flex flex-col gap-1.5">
+              <FullValue label="Key" mono>
+                {row.key}
+              </FullValue>
+              <FullValue label="Source">{row.source}</FullValue>
+              <FullValue label="Translation" direction={direction} lang={row.locale}>
+                {row.target.length === 0 ? "(empty)" : row.target}
+              </FullValue>
+            </dl>
+          </Section>
+
           <Section title="Model rationale">
             {row.rationale === undefined || row.rationale.length === 0 ? (
               <p className="text-[13px] text-[var(--text-tertiary)]">
@@ -153,6 +169,38 @@ function Section({
         {title}
       </h4>
       {children}
+    </div>
+  );
+}
+
+function FullValue({
+  label,
+  children,
+  mono = false,
+  direction,
+  lang,
+}: {
+  label: string;
+  children: React.ReactNode;
+  mono?: boolean;
+  direction?: "ltr" | "rtl";
+  lang?: string;
+}) {
+  return (
+    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-baseline gap-2">
+      <dt className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)]">
+        {label}
+      </dt>
+      <dd
+        dir={direction}
+        lang={lang}
+        className={cn(
+          "min-w-0 break-words text-[13px] leading-snug text-[var(--text-secondary)]",
+          mono && "font-[family-name:var(--font-mono)] text-[12px]",
+        )}
+      >
+        {children}
+      </dd>
     </div>
   );
 }

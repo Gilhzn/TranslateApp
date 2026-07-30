@@ -33,6 +33,8 @@ import {
  */
 
 const HEADER_HEIGHT = 34;
+/** Roughly the height of the inline editor popover, used to reserve room. */
+const EDITOR_OVERLAY_HEIGHT = 196;
 
 const COLUMNS_WITH_LOCALE =
   "28px minmax(140px,1.05fr) 62px minmax(150px,1.15fr) minmax(190px,1.5fr) 168px 118px";
@@ -185,8 +187,19 @@ export function ReviewTable({
     (row: ReviewRow, index: number) => {
       setActiveIndex(index);
       startEditing(row);
+
+      // The editor is an overlay hanging below its cell; make room for it so a
+      // row near the bottom edge does not open into a clipped popover.
+      const container = scrollRef.current;
+      if (container === null) return;
+      const needed =
+        (offsets[index + 1] ?? 0) + EDITOR_OVERLAY_HEIGHT - viewportHeight;
+      if (needed > container.scrollTop) {
+        container.scrollTop = needed;
+        setScrollTop(needed);
+      }
     },
-    [startEditing],
+    [offsets, startEditing, viewportHeight],
   );
 
   const handleDraftChange = React.useCallback((value: string) => {
@@ -288,6 +301,11 @@ export function ReviewTable({
         className="overflow-auto overscroll-contain"
         style={{ height }}
       >
+        {/*
+          The grid is the single tab stop; its own outline is suppressed and the
+          focus indicator is drawn on the active row instead, which is where the
+          keyboard cursor actually is.
+        */}
         <div
           ref={gridRef}
           role="grid"
@@ -297,13 +315,11 @@ export function ReviewTable({
           aria-activedescendant={activeId}
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          className="relative min-w-[880px] outline-none focus-visible:outline-none"
+          className="group/grid relative min-w-[880px] outline-none focus-visible:outline-none"
         >
           <HeaderRow columns={columns} showLocale={showLocale} />
 
-          {rows.length === 0 ? (
-            <EmptyState title={emptyTitle} hint={emptyHint} />
-          ) : (
+          {rows.length > 0 && (
             <>
               <div role="presentation" style={{ height: slice.padTop }} />
               {Array.from({ length: slice.end - slice.start }, (_, offset) => {
@@ -337,6 +353,9 @@ export function ReviewTable({
             </>
           )}
         </div>
+
+        {/* Outside the grid: a grid's children must be rows. */}
+        {rows.length === 0 && <EmptyState title={emptyTitle} hint={emptyHint} />}
       </div>
     </Shell>
   );
@@ -470,7 +489,12 @@ const TableRow = React.memo(function TableRow({
           "text-[13px] leading-none",
           "hover:bg-[color-mix(in_oklch,var(--color-ink-800)_45%,transparent)]",
           active &&
-            "bg-[color-mix(in_oklch,var(--color-accent-500)_10%,transparent)] shadow-[inset_2px_0_0_var(--color-accent-500)]",
+            cn(
+              "bg-[color-mix(in_oklch,var(--color-accent-500)_10%,transparent)]",
+              "shadow-[inset_2px_0_0_var(--color-accent-500)]",
+              "group-focus-visible/grid:ring-1 group-focus-visible/grid:ring-inset",
+              "group-focus-visible/grid:ring-[color-mix(in_oklch,var(--color-accent-400)_75%,transparent)]",
+            ),
           row.status === "failed" &&
             !active &&
             "shadow-[inset_2px_0_0_color-mix(in_oklch,var(--color-danger-500)_70%,transparent)]",
@@ -761,10 +785,12 @@ function TranslationEditor({
 
   return (
     <div className="relative min-w-0">
+      {/*
+        The row focuses the grid on mousedown; inside the editor that would
+        steal focus out of the textarea on every click.
+      */}
       <div
         ref={panelRef}
-        // The row focuses the grid on mousedown; inside the editor that would
-        // steal focus out of the textarea on every click.
         onMouseDown={(event) => {
           event.stopPropagation();
         }}

@@ -15,7 +15,10 @@ export function toBlob(file: ExportFile): Blob {
 }
 
 export function toZipBlob(bytes: Uint8Array): Blob {
-  return new Blob([bytes], { type: ZIP_MIME });
+  // Since TypeScript 5.7 `Uint8Array` is generic over its backing buffer and
+  // `BlobPart` insists on a plain `ArrayBuffer`. Every array this module
+  // produces is allocated with `new Uint8Array(n)`, so the narrowing is sound.
+  return new Blob([bytes as Uint8Array<ArrayBuffer>], { type: ZIP_MIME });
 }
 
 /** Byte length of a UTF-8 encoded export, for the "12.4 kB" label. */

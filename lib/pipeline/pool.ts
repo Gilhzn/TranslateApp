@@ -47,13 +47,16 @@ export async function mapPool<T, R>(
 
   let cursor = 0;
   let completed = 0;
-  let failure: { error: unknown } | null = null;
+  // Held in a box rather than a `let`: the compiler narrows a closure-assigned
+  // local back to `null` at the read below, and the first rejection would be
+  // swallowed.
+  const first: { failure: { error: unknown } | null } = { failure: null };
 
   const runner = async (): Promise<void> => {
     for (;;) {
       // Both gates are re-read every iteration: a sibling worker may have
       // failed, or the caller may have cancelled, since the last await.
-      if (failure !== null || isAborted(signal)) return;
+      if (first.failure !== null || isAborted(signal)) return;
       const index = cursor;
       if (index >= items.length) return;
       cursor = index + 1;
@@ -64,7 +67,7 @@ export async function mapPool<T, R>(
         results[index] = await worker(item, index);
         completed += 1;
       } catch (error) {
-        if (failure === null) failure = { error };
+        if (first.failure === null) first.failure = { error };
         return;
       }
     }
@@ -74,7 +77,7 @@ export async function mapPool<T, R>(
   for (let i = 0; i < limit; i += 1) runners.push(runner());
   await Promise.all(runners);
 
-  if (failure !== null) throw failure.error;
+  if (first.failure !== null) throw first.failure.error;
   // Abort is only reported when it actually cost us work; a signal that fired
   // after the last item finished did not cancel anything.
   if (completed < items.length) throw new JobAbortedError();

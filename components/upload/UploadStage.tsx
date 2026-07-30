@@ -32,6 +32,11 @@ import {
 export type StartHandler = (
   catalog: ParsedCatalog,
   settings: TranslationSettings,
+  /**
+   * The bytes the catalog was parsed from. `/api/translate` parses the source
+   * itself and must see the developer's file, not a reconstruction of it.
+   */
+  sourceText: string,
 ) => void;
 
 export interface UploadStageProps {
@@ -42,6 +47,12 @@ export interface UploadStageProps {
    * the action opens the run-request inspector instead of dispatching a job.
    */
   onStart?: StartHandler;
+  /**
+   * Fired whenever the loaded catalog changes — a successful parse, or `null`
+   * when there is nothing loaded. Lets the orchestrator show where the
+   * developer is in the flow without owning the form's state.
+   */
+  onCatalogChange?: (catalog: ParsedCatalog | null) => void;
   /** True while the orchestrator is running; locks the whole form. */
   busy?: boolean;
   className?: string;
@@ -50,6 +61,7 @@ export interface UploadStageProps {
 export function UploadStage({
   provider,
   onStart,
+  onCatalogChange,
   busy = false,
   className,
 }: UploadStageProps) {
@@ -57,6 +69,9 @@ export function UploadStage({
   // `catalog !== null`, so the two can never disagree.
   const [parsing, setParsing] = React.useState(false);
   const [catalog, setCatalog] = React.useState<ParsedCatalog | null>(null);
+  // Held beside the catalog rather than derived from it, so the job posts the
+  // file the developer dropped rather than a re-serialisation of its tree.
+  const [sourceText, setSourceText] = React.useState("");
   const [failure, setFailure] = React.useState<UploadFailure | null>(null);
   const [draft, setDraft] = React.useState<SettingsDraft>(() =>
     initialSettingsDraft("en"),
@@ -71,12 +86,19 @@ export function UploadStage({
     setFailure(null);
   }, []);
 
-  const onCatalog = React.useCallback((next: ParsedCatalog) => {
+  // A ref so a parent that passes an inline arrow does not re-create the
+  // DropZone's handler identity on every render.
+  const notifyRef = React.useRef(onCatalogChange);
+  notifyRef.current = onCatalogChange;
+
+  const onCatalog = React.useCallback((next: ParsedCatalog, text: string) => {
     setCatalog(next);
+    setSourceText(text);
     setFailure(null);
     setParsing(false);
     setAttempted(false);
     setInspecting(false);
+    notifyRef.current?.(next);
     // A new file may be a different source language; keep the developer's tone,
     // context, glossary and guardrails, but re-anchor the source locale and drop
     // a target that has become the source.
@@ -120,7 +142,7 @@ export function UploadStage({
     setAttempted(true);
     if (!ready || catalog === null) return;
     if (onStart !== undefined) {
-      onStart(catalog, settings);
+      onStart(catalog, settings, sourceText);
       return;
     }
     // No orchestrator wired yet: show exactly what would have been dispatched

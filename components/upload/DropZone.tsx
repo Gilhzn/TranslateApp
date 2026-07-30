@@ -22,7 +22,16 @@ import {
 } from "./file-validation";
 
 export interface DropZoneProps {
-  onCatalog: (catalog: ParsedCatalog) => void;
+  /**
+   * Receives the parsed catalog *and* the exact text it was parsed from.
+   *
+   * The raw text is carried because the orchestrator has to post the
+   * developer's own bytes to `/api/translate`, which re-parses on the server:
+   * re-serialising the catalog here would mean the "structurally identical to
+   * your input" guarantee is measured against a client-side reconstruction
+   * rather than against the file that was dropped.
+   */
+  onCatalog: (catalog: ParsedCatalog, sourceText: string) => void;
   onFailure: (failure: UploadFailure) => void;
   /** Fired before the (synchronous, potentially slow) parse begins. */
   onParseStart: () => void;
@@ -88,15 +97,20 @@ export function DropZone({
         fail(failureFromUnknown(error, fileName));
         return;
       }
+      let catalog: ParsedCatalog;
       try {
-        emit(parseSourceFile(fileName, text));
+        catalog = parseSourceFile(fileName, text);
       } catch (error) {
         fail(
           error instanceof JsonParseError
             ? failureFromParseError(error)
             : failureFromUnknown(error, fileName),
         );
+        return;
       }
+      // Outside the try: a throw from the consumer is a bug in the consumer,
+      // not a parse failure, and must not be reported as one.
+      emit(catalog, text);
     },
     [],
   );

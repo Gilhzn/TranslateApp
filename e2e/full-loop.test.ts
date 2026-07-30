@@ -52,7 +52,7 @@ describe.each(FIXTURES)("end-to-end: %s", (fixture) => {
   });
 
   it("translates every target locale with the guarantees intact", async () => {
-    const provider = resolveProvider({ preferOffline: true });
+    const provider = resolveProvider({ mode: "deterministic" });
     const progress: JobProgress[] = [];
 
     const job = await runJob({
@@ -109,7 +109,7 @@ describe.each(FIXTURES)("end-to-end: %s", (fixture) => {
   }, 120_000);
 
   it("preserves every placeholder token in every locale", async () => {
-    const provider = resolveProvider({ preferOffline: true });
+    const provider = resolveProvider({ mode: "deterministic" });
     const job = await runJob({
       catalog,
       settings: settingsFor(["de", "ja"]),

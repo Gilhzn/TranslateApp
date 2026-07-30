@@ -109,7 +109,11 @@ export function ReviewToolbar({
             onClick={onExportAll}
             iconLeft={<ArchiveGlyph />}
           >
-            Export all · {locales.length} locales
+            {/*
+              A partial run can leave exactly one finished locale, and
+              "1 locales" is the kind of detail that makes a tool feel unfinished.
+            */}
+            Export all · {locales.length} {locales.length === 1 ? "locale" : "locales"}
           </Button>
         </div>
       </div>

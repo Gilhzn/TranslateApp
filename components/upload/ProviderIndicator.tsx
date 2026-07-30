@@ -43,6 +43,12 @@ export function ProviderIndicator({ provider, className }: ProviderIndicatorProp
 
 export interface ProviderNoticeProps {
   provider: ActiveProviderDescription;
+  /**
+   * Overrides the notice's first line. The header pill already states the mode
+   * in `provider.headline`; where both are on screen the notice should say what
+   * the mode *means for this run* instead of repeating the pill word for word.
+   */
+  title?: string;
   className?: string;
 }
 
@@ -64,7 +70,7 @@ const NOTICE_TITLE_TONES: Record<Tone, string> = {
  * a live, configured model needs no explanation, and a permanent green box is
  * how banners stop being read.
  */
-export function ProviderNotice({ provider, className }: ProviderNoticeProps) {
+export function ProviderNotice({ provider, title, className }: ProviderNoticeProps) {
   if (provider.mode === "live" && provider.ready) return null;
   const tone = toneFor(provider);
 
@@ -86,7 +92,7 @@ export function ProviderNotice({ provider, className }: ProviderNoticeProps) {
       />
       <div className="min-w-0 space-y-1">
         <p className={cn("text-[13px] font-medium", NOTICE_TITLE_TONES[tone])}>
-          {provider.headline}
+          {title ?? provider.headline}
         </p>
         <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
           {provider.detail}

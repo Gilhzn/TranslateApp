@@ -133,13 +133,27 @@ function charLength(value: string): number {
  * conversion uses the *observed* width-per-character of the rejected attempt,
  * which is exact for the string that actually failed and is the honest way to
  * express a proportional budget in units the model understands.
+ *
+ * `budget.maxChars` cannot be used on its own: it is an advisory figure derived
+ * from the source at an *average* target glyph width. A rejected attempt built
+ * from wider-than-average glyphs — an ALL-CAPS button label, the gaming
+ * register — can sit at or under `maxChars` while still rendering past
+ * `allowedWidth`. Stating that number would produce a directive that quotes a
+ * budget >= the attempt it just rejected and demands a cut in the same
+ * sentence, so the advisory cap and the observed ceiling are reconciled by
+ * taking the smaller. Since an overflowing attempt has
+ * `targetWidth > allowedWidth`, the observed ceiling is strictly below the
+ * attempt's own character count.
  */
 function characterCeiling(previousTarget: string, fit: FitResult): number {
   const chars = charLength(previousTarget);
-  if (fit.budget.maxChars !== null) return fit.budget.maxChars;
-  if (chars === 0 || fit.targetWidth <= 0) return Math.max(1, chars);
-  const perChar = fit.targetWidth / chars;
-  return Math.max(1, Math.floor(fit.allowedWidth / perChar));
+  const observed =
+    chars === 0 || fit.targetWidth <= 0
+      ? Math.max(1, chars)
+      : Math.max(1, Math.floor(fit.allowedWidth / (fit.targetWidth / chars)));
+  return fit.budget.maxChars === null
+    ? observed
+    : Math.max(1, Math.min(fit.budget.maxChars, observed));
 }
 
 function overflowDirective(

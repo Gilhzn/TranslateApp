@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractPlaceholders } from "@/lib/core";
+import { evaluateFit, getLocaleProfile } from "@/lib/layout";
 import type { FitResult, Issue, LengthBudget, TranslationUnit } from "@/lib/types";
 import { classify, issue } from "./errors";
 import {
@@ -116,9 +117,12 @@ describe("buildRepairFeedback", () => {
     const fit = fitOf("overflow", { overBy: 3 });
     const feedback = buildRepairFeedback(unit, previous, issuesFromFit(fit), fit);
 
+    // 24 chars at 9.4em ⇒ 0.392em/char, so 5.2em of allowance is 13 characters
+    // — below the advisory 18-char cap, because this attempt's glyphs are wider
+    // than the average the cap assumes.
     expect(feedback).toContain("was 24 characters");
-    expect(feedback).toContain("button budget is 18");
-    expect(feedback).toContain("Cut at least 6 characters");
+    expect(feedback).toContain("button budget is 13");
+    expect(feedback).toContain("Cut at least 11 characters");
     expect(feedback).toContain("Do not truncate or add an ellipsis");
     expect(feedback).toContain("Hard limit: 18 characters");
   });
@@ -135,6 +139,59 @@ describe("buildRepairFeedback", () => {
     expect(feedback).toContain("budget is 12");
     expect(feedback).toContain("Cut at least 12 characters");
     expect(feedback).toContain("Target length: at most 12 characters");
+  });
+
+  it("never states a character budget the rejected attempt already satisfies", () => {
+    // Regression: `maxChars` is derived from the source at an AVERAGE target
+    // glyph width. An ALL-CAPS button label — the gaming register — is made of
+    // wider-than-average glyphs, so it can overflow `allowedWidth` while its
+    // character count sits at or under the cap. Quoting the cap produced a
+    // self-contradictory directive: "was 15 characters but the button budget is
+    // 15. Cut at least 1 character."
+    const profile = getLocaleProfile("de-DE");
+    const previous = "KAMPF BEGINNEN!"; // 15 characters, all caps
+    const fit = evaluateFit("Save changes", previous, "button", profile);
+
+    expect(fit.verdict).toBe("overflow");
+    // The precondition that used to break the directive: the attempt is within
+    // the advisory cap yet still too wide.
+    expect([...previous].length).toBe(fit.budget.maxChars);
+
+    const unit = unitFor("Save changes", {
+      budget: fit.budget,
+      allowedWidth: fit.allowedWidth,
+    });
+    const feedback = buildRepairFeedback(unit, previous, issuesFromFit(fit), fit);
+
+    const stated = /budget is (\d+)\./.exec(feedback);
+    expect(stated).not.toBeNull();
+    expect(Number(stated?.[1])).toBeLessThan([...previous].length);
+  });
+
+  it("keeps the stated ceiling below the attempt for every overflowing fit", () => {
+    const profile = getLocaleProfile("de-DE");
+    const attempts = [
+      "KAMPF BEGINNEN!",
+      "ALLE ÄNDERUNGEN SICHERN",
+      "WWWWWWWWWWWWWWW",
+      "SPIELSTAND ÜBERSCHREIBEN?",
+      "Alle Änderungen dauerhaft sichern",
+    ];
+
+    for (const previous of attempts) {
+      const fit = evaluateFit("Save changes", previous, "button", profile);
+      expect(fit.verdict).toBe("overflow");
+
+      const unit = unitFor("Save changes", {
+        budget: fit.budget,
+        allowedWidth: fit.allowedWidth,
+      });
+      const feedback = buildRepairFeedback(unit, previous, issuesFromFit(fit), fit);
+      const stated = /budget is (\d+)\./.exec(feedback);
+
+      expect(stated, previous).not.toBeNull();
+      expect(Number(stated?.[1]), previous).toBeLessThan([...previous].length);
+    }
   });
 
   it("names the exact missing placeholder", () => {

@@ -1,7 +1,13 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "@/lib/types";
 import { flattenJson, rebuildTree } from "./flatten";
-import { parseSourceFile, serializeWithCatalogFormatting } from "./parse";
+import {
+  detectEol,
+  parseSourceFile,
+  serializeWithCatalogFormatting,
+} from "./parse";
 import { decodeKey, encodeKey } from "./keys";
 
 /**
@@ -271,5 +277,135 @@ describe("structural fuzzing", () => {
       );
       expect(output).toBe(raw);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Line endings
+// ---------------------------------------------------------------------------
+
+const FIXTURES = ["indie-game-en.json", "micro-saas-en.json"] as const;
+
+function readFixture(name: string): string {
+  const path = fileURLToPath(new URL(`../../fixtures/${name}`, import.meta.url));
+  return readFileSync(path, "utf8");
+}
+
+/** Normalise to LF first so the conversion is idempotent on any checkout. */
+function toCrlf(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
+}
+
+function toLf(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+describe("detectEol", () => {
+  it("defaults to LF when there is no newline at all", () => {
+    expect(detectEol('{"a":1}')).toBe("\n");
+    expect(detectEol("")).toBe("\n");
+  });
+
+  it("reports the dominant style", () => {
+    expect(detectEol("a\nb\nc")).toBe("\n");
+    expect(detectEol("a\r\nb\r\nc")).toBe("\r\n");
+    // A lone CR is not a line ending in any style we emit.
+    expect(detectEol("a\rb")).toBe("\n");
+  });
+
+  it("breaks a tie in favour of LF", () => {
+    expect(detectEol("a\r\nb\nc")).toBe("\n");
+  });
+});
+
+describe("line-ending preservation", () => {
+  for (const name of FIXTURES) {
+    it(`re-emits ${name} byte-identically when authored CRLF`, () => {
+      const source = toCrlf(readFixture(name));
+      const catalog = parseSourceFile(name, source);
+      expect(catalog.eol).toBe("\r\n");
+      const output = serializeWithCatalogFormatting(
+        catalog,
+        rebuildTree(catalog.tree, new Map()),
+      );
+      expect(output).toBe(source);
+      // Guard against the failure this test exists for: a diff where every
+      // line changed because the LF copy is byte-different from the CRLF one.
+      expect(output).not.toBe(toLf(source));
+    });
+
+    it(`re-emits ${name} byte-identically when authored LF`, () => {
+      const source = toLf(readFixture(name));
+      const catalog = parseSourceFile(name, source);
+      expect(catalog.eol).toBe("\n");
+      const output = serializeWithCatalogFormatting(
+        catalog,
+        rebuildTree(catalog.tree, new Map()),
+      );
+      expect(output).toBe(source);
+      expect(output).not.toContain("\r");
+    });
+
+    it(`rewrites only translated lines of a CRLF ${name}`, () => {
+      const source = toCrlf(readFixture(name));
+      const catalog = parseSourceFile(name, source);
+      const translations = new Map<string, string>();
+      for (const entry of catalog.entries) {
+        if (entry.doNotTranslate) continue;
+        translations.set(entry.key, entry.value);
+      }
+      const output = serializeWithCatalogFormatting(
+        catalog,
+        rebuildTree(catalog.tree, translations),
+      );
+      // Identity translations: a correct emitter changes zero lines.
+      const before = source.split("\r\n");
+      const after = output.split("\r\n");
+      expect(after).toEqual(before);
+      expect(output.split("\n").length - 1).toBe(
+        output.split("\r\n").length - 1,
+      );
+    });
+  }
+
+  it("picks the majority style for a mixed-EOL file", () => {
+    const lines = [
+      "{",
+      '  "menu": {',
+      '    "play": "Play",',
+      '    "quit": "Quit"',
+      "  },",
+      '  "hud": {',
+      '    "hp": "HP {current}/{max}"',
+      "  }",
+      "}",
+    ];
+    // Every break is CRLF except one, so CRLF wins 8-1.
+    const mostlyCrlf = `${lines.join("\r\n")}\r\n`.replace(
+      '  },\r\n  "hud"',
+      '  },\n  "hud"',
+    );
+    const catalog = parseSourceFile("en.json", mostlyCrlf);
+    expect(catalog.eol).toBe("\r\n");
+    const output = serializeWithCatalogFormatting(
+      catalog,
+      rebuildTree(catalog.tree, new Map()),
+    );
+    // The stray LF is normalised to the majority style, not preserved.
+    expect(output).toBe(`${lines.join("\r\n")}\r\n`);
+    expect(/(^|[^\r])\n/.test(output)).toBe(false);
+
+    const mostlyLf = `${lines.join("\n")}\n`.replace(
+      '  },\n  "hud"',
+      '  },\r\n  "hud"',
+    );
+    const lfCatalog = parseSourceFile("en.json", mostlyLf);
+    expect(lfCatalog.eol).toBe("\n");
+    expect(
+      serializeWithCatalogFormatting(
+        lfCatalog,
+        rebuildTree(lfCatalog.tree, new Map()),
+      ),
+    ).toBe(`${lines.join("\n")}\n`);
   });
 });

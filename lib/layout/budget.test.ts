@@ -539,6 +539,104 @@ describe("describeBudgetForPrompt", () => {
     }
   });
 
+  /**
+   * The wrapping roles (tooltip, error, toast, body, unknown) carry
+   * `maxChars === null`, so every limit they advertise comes out of this
+   * helper's own fallback. That fallback used to scale the source's *character
+   * count* by `budget.maxRatio` — a width ratio — which is the unit error
+   * `metrics.ts` and `locales.ts` both warn about. It shipped limits ~2.2-2.4x
+   * over what the width admits for ja/ko/zh and ~1.3x over for Latin and Greek,
+   * i.e. an instruction to overflow that `evaluateFit` then rejects.
+   *
+   * Checked exhaustively over the catalog, in width rather than in character
+   * count, because width is the only authority here: the most charitable string
+   * the model can return at the stated limit — that many ordinary letters of the
+   * target script — has to fit.
+   */
+  const WRAPPING_ROLES: readonly UiRole[] = ALL_ROLES.filter(
+    (role) => roleSpec(role).hardCap === null,
+  );
+  const PROMPT_SOURCES = [
+    "OK",
+    "Settings",
+    "Export data",
+    "Welcome to the app.",
+    "Your changes could not be saved.",
+  ] as const;
+
+  const statedLimit = (copy: string): number => {
+    const match = /^Maximum (\d+) characters/.exec(copy);
+    expect(match, copy).not.toBeNull();
+    return Number(match?.[1] ?? "0");
+  };
+
+  it("advertises a limit the width admits for every wrapping role and locale", () => {
+    const codes = Object.keys(LOCALE_PROFILES);
+    // Guards the loop: an empty catalog would make this vacuously green.
+    expect(codes.length).toBeGreaterThanOrEqual(48);
+    expect(WRAPPING_ROLES.length).toBeGreaterThanOrEqual(5);
+
+    let combinations = 0;
+    for (const code of codes) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) continue;
+      const letter = typicalCharOf(profile);
+
+      for (const role of WRAPPING_ROLES) {
+        for (const source of PROMPT_SOURCES) {
+          const budget = budgetForRole(role, source, profile);
+          expect(budget.maxChars, `${code}/${role}`).toBeNull();
+          combinations += 1;
+
+          // With the role supplied: the role's own allowance is the authority.
+          const withRole = statedLimit(
+            describeBudgetForPrompt(budget, profile, source, role),
+          );
+          expect(
+            estimateWidth(letter.repeat(withRole), profile),
+            `${code}/${role} "${source}": stated ${withRole} chars`,
+          ).toBeLessThanOrEqual(allowedWidthFor(source, role, profile));
+          expect(
+            evaluateFit(source, letter.repeat(withRole), role, profile).verdict,
+            `${code}/${role} "${source}": stated ${withRole} chars`,
+          ).not.toBe("overflow");
+
+          // Without a role the helper knows nothing about the chrome, so it
+          // must stay inside the conservative `unknown` allowance.
+          const roleless = statedLimit(
+            describeBudgetForPrompt(budget, profile, source),
+          );
+          expect(
+            estimateWidth(letter.repeat(roleless), profile),
+            `${code}/no role, budget from ${role}, "${source}": stated ${roleless} chars`,
+          ).toBeLessThanOrEqual(allowedWidthFor(source, "unknown", profile));
+          expect(
+            evaluateFit(source, letter.repeat(roleless), "unknown", profile)
+              .verdict,
+            `${code}/no role, budget from ${role}, "${source}": stated ${roleless} chars`,
+          ).not.toBe("overflow");
+        }
+      }
+    }
+    expect(combinations).toBeGreaterThanOrEqual(1225);
+  });
+
+  it("stays satisfiable without a role: at least two characters", () => {
+    // Conservative must not collapse into useless. No string of meaning is one
+    // character, in any script.
+    for (const code of Object.keys(LOCALE_PROFILES)) {
+      const profile = LOCALE_PROFILES[code];
+      if (profile === undefined) continue;
+      for (const source of PROMPT_SOURCES) {
+        const budget = budgetForRole("body", source, profile);
+        const stated = statedLimit(
+          describeBudgetForPrompt(budget, profile, source),
+        );
+        expect(stated, `${code} "${source}"`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
   it("uses the singular for a one-character source", () => {
     const budget = budgetForRole("badge", "1", de);
     expect(describeBudgetForPrompt(budget, de, "1", "badge")).toContain(

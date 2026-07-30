@@ -461,6 +461,7 @@ export function buildSystemPrompt(request: ProviderRequest): string {
       "",
       "- No markdown fences. No prose before or after. No comments. No trailing commas.",
       "- One entry per unit you were given, using the key EXACTLY as written — keys are machine identifiers, never translate or reformat them.",
+      "- Each unit's `key:` line presents the key as a JSON-QUOTED STRING, in double quotes and with any newline, tab, backslash or quote inside it escaped. That is the presentation, not the key. Return the DECODED value: parse the quoted form and put the resulting characters in your `key` field, then re-escape them as JSON requires. Leading spaces, trailing spaces, runs of spaces, tabs and newlines inside a key are SIGNIFICANT — reproduce them exactly. A key that comes back trimmed, re-spaced or with the surrounding quotes left in is a key nobody asked for, and the entry is discarded.",
       "- Keep the entries in the order the units were given.",
       "- `target` is the translation only. Never wrap it in quotes of your own, never add a note inside it.",
       "- `rationale` is ONE short clause, in ENGLISH, explaining a non-obvious choice — an abbreviation you chose to fit, a term you deliberately left in English, a reading you picked between two senses. OMIT the field entirely when the choice is obvious. It is read by a developer scanning a review table, not by a user.",
@@ -622,15 +623,23 @@ function inline(value: string): string {
 /**
  * Quote a value for the prompt, with the delimiters visible to the model.
  *
- * `JSON.stringify` escapes `\r` and `\n`, but per the JSON grammar it leaves
- * U+2028 / U+2029 as raw characters even though ECMAScript (and a fair number
- * of renderers) treat them as line terminators. Patching those two keeps a
- * quoted value on one line under every reader.
+ * `JSON.stringify` escapes `\r`, `\n` and every C0 control, but per the JSON
+ * grammar it leaves U+2028 / U+2029 / U+0085 as raw characters even though
+ * ECMAScript (and a fair number of renderers) treat them as line terminators.
+ * Patching those three keeps a quoted value on one line under every reader.
+ *
+ * The result is therefore both a strictly stronger line-forgery defence than
+ * `inline` \u2014 a line terminator becomes two visible characters, so it can never
+ * start a new record \u2014 and exactly invertible: `JSON.parse` of what the model
+ * is shown returns the original string byte for byte. That second property is
+ * what `inline` cannot offer, and it is why the key is quoted rather than
+ * inlined (see `buildUnitBlock`).
  */
 function quoted(value: string): string {
   return JSON.stringify(value)
     .replace(/\u2028/gu, "\\u2028")
-    .replace(/\u2029/gu, "\\u2029");
+    .replace(/\u2029/gu, "\\u2029")
+    .replace(/\u0085/gu, "\\u0085");
 }
 
 function isRepair(unit: TranslationUnit): boolean {
@@ -659,7 +668,14 @@ function buildUnitBlock(
   // table, so those two are trusted. The budget sentence is generated, but it
   // is inlined anyway so that "exactly one `length:` line per unit" is a
   // structural property of this function rather than a property of `lib/layout`.
-  lines.push(`key: ${inline(unit.key)}`);
+  //
+  // The key is the exception: it is QUOTED, not inlined. `parseProviderOutput`
+  // reconciles the reply against the raw `unit.key`, so a key shown through the
+  // lossy `inline` (which trims, collapses whitespace runs and folds newlines)
+  // would have an obedient model's echo dropped as "not requested" and the real
+  // key reported missing. `quoted` is exactly invertible and is the stronger
+  // line-forgery defence of the two, so it satisfies both requirements at once.
+  lines.push(`key: ${quoted(unit.key)}`);
   lines.push(`role: ${unit.role} — ${roleGuidance(unit.role)}`);
   lines.push(`source: ${quoted(unit.source)}`);
   lines.push(

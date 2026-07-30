@@ -146,7 +146,7 @@ describe("AnthropicProvider", () => {
       const call = calls[0]!;
       expect(call.model).toBe("claude-sonnet-5");
       expect(call.system).toMatch(/senior localisation engineer/);
-      expect(call.user).toContain("key: menu.save");
+      expect(call.user).toContain('key: "menu.save"');
       expect(call.maxTokens).toBeGreaterThan(0);
     });
 

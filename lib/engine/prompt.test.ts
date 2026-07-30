@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getLocaleProfile } from "@/lib/layout";
 import type { GlossaryTerm } from "@/lib/types";
 import { parseSourceFile } from "@/lib/core";
+import { parseProviderOutput } from "./parse";
 import {
   buildSystemPrompt,
   buildUserPrompt,
@@ -298,7 +299,7 @@ describe("buildUserPrompt", () => {
     });
     const prompt = buildUserPrompt(makeRequest({ units: [unit] }));
 
-    expect(prompt).toContain("key: menu.file.save");
+    expect(prompt).toContain('key: "menu.file.save"');
     expect(prompt).toContain('source: "Save {count} files"');
     expect(prompt).toContain("role: menu —");
     expect(prompt).toMatch(/length: Maximum \d+ characters/);
@@ -574,5 +575,96 @@ describe("buildSystemPrompt record integrity", () => {
     // that legitimately starts `- "Save" on a button …` must not be counted.
     expect(countLinesStartingWith(prompt, '- "Save" →')).toBe(0);
     expect(prompt).toContain('- "Drifter" → "Drifter" [case-sensitive] — Protagonist.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Key round-trip
+// ---------------------------------------------------------------------------
+
+/**
+ * The key is the one field that must survive the prompt byte-exactly.
+ *
+ * `parseProviderOutput` reconciles the model's reply against the RAW
+ * `unit.key`, so whatever the prompt shows has to decode back to exactly that.
+ * A lossy presentation — trimming, collapsing whitespace runs, folding a
+ * newline to a space — makes an obedient model, one that echoes precisely what
+ * it was shown, have its answer dropped as "not requested" while the real key
+ * is reported missing: the whole batch lost, with the diagnostics pointing at
+ * the model instead of at us.
+ *
+ * `lib/core/keys` escapes `\ . [ ]` only, so every key below is legal in an
+ * uploaded catalog.
+ */
+const ROUND_TRIP_KEYS = [
+  "menu\nsave", // newline — the character that could forge a record line
+  "menu\tsave", // tab
+  "  menu.save", // leading spaces
+  "menu.save  ", // trailing spaces
+  "menu.  save", // an interior run of spaces
+  "menu\u0085save", // NEL: a line break to some readers, raw out of JSON.stringify
+  "menu.save", // the ordinary case, as a control
+] as const;
+
+/** Read back exactly what the model is shown on each `key:` line. */
+function keyLinesOf(prompt: string): string[] {
+  return prompt
+    .split("\n")
+    .filter((line) => line.startsWith("key: "))
+    .map((line) => line.slice("key: ".length));
+}
+
+describe("key round-trip through the prompt", () => {
+  const units = ROUND_TRIP_KEYS.map((key) => makeUnit({ key, source: "Save" }));
+  const prompt = buildUserPrompt(makeRequest({ units }));
+
+  it("presents every key as a decodable JSON string, one line per unit", () => {
+    const shown = keyLinesOf(prompt);
+    expect(shown).toHaveLength(units.length);
+    // Still exactly one record line per unit: no key can forge a second.
+    expect(countLinesStartingWith(prompt, "--- UNIT ")).toBe(units.length);
+    expect(countLinesStartingWith(prompt, "length: ")).toBe(units.length);
+    for (const line of shown) {
+      expect(() => JSON.parse(line) as unknown).not.toThrow();
+    }
+  });
+
+  it("decodes back to the raw key byte for byte", () => {
+    const shown = keyLinesOf(prompt);
+    expect(shown.map((line) => JSON.parse(line) as string)).toEqual([
+      ...ROUND_TRIP_KEYS,
+    ]);
+  });
+
+  it("escapes rather than folds, leaving no raw line terminator behind", () => {
+    for (const separator of ["\u2028", "\u2029", "\u0085"]) {
+      expect(prompt.includes(separator)).toBe(false);
+    }
+    expect(prompt).toContain('key: "menu\\nsave"');
+    expect(prompt).toContain('key: "menu\\tsave"');
+    expect(prompt).toContain('key: "  menu.save"');
+    expect(prompt).toContain('key: "menu.save  "');
+    expect(prompt).toContain('key: "menu.  save"');
+    expect(prompt).toContain('key: "menu\\u0085save"');
+  });
+
+  it("reconciles a model that echoes exactly what the prompt showed", () => {
+    // The obedient model: decode each quoted key, answer, re-encode as JSON.
+    const echoed = keyLinesOf(prompt).map((line) => JSON.parse(line) as string);
+    const reply = JSON.stringify({
+      translations: echoed.map((key, index) => ({
+        key,
+        target: `Speichern ${index}`,
+      })),
+    });
+
+    const parsed = parseProviderOutput(reply, {
+      expectedKeys: units.map((unit) => unit.key),
+    });
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.translations.map((translation) => translation.key)).toEqual([
+      ...ROUND_TRIP_KEYS,
+    ]);
   });
 });

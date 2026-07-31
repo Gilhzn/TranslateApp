@@ -64,7 +64,9 @@ function step(label) {
 async function shot(page, name) {
   if (SHOT_DIR === null) return;
   await page.screenshot({
-    path: path.join(REPO, SHOT_DIR, `browser-flow-${name}.png`),
+    // resolve, not join: an absolute SHOT_DIR should be honoured, not appended
+    // to the repo root (which silently builds a mirrored tree inside it).
+    path: path.join(path.resolve(REPO, SHOT_DIR), `browser-flow-${name}.png`),
     fullPage: false,
   });
 }
